@@ -359,7 +359,67 @@ def grafico_top_ergonomos(df):
     fig.update_layout(yaxis={'categoryorder': 'total ascending'})
     return fig
 
-# ── 6. FUNCIÓN DETALLE COMPLETO ───────────────────────────────────────────────
+# ── 6. FUNCIÓN PARETO EP ──────────────────────────────────────────────────────
+def grafico_pareto(df_ep, columna, titulo, separador_secundario=","):
+    """
+    Genera un gráfico de Pareto (barras + línea acumulada) para la columna indicada.
+    Retorna (fig, df_pareto) con Rank, Nombre, Casos EP, %, % Acumulado, Vital.
+    """
+    ranking = obtener_ranking_limpio(df_ep, columna,
+                                     separador_secundario=separador_secundario)
+    if ranking.empty:
+        return None, pd.DataFrame()
+
+    ranking = ranking.head(30).copy()
+    total = ranking['Cantidad'].sum()
+    ranking['Pct']      = (ranking['Cantidad'] / total * 100).round(1)
+    ranking['PctAcum']  = ranking['Pct'].cumsum().round(1)
+    ranking['Rank']     = range(1, len(ranking) + 1)
+    ranking['Vital']    = ranking['PctAcum'] <= 80.0
+
+    colores = ['#E74C3C' if v else '#85C1E9' for v in ranking['Vital']]
+
+    fig = go.Figure()
+
+    # Barras
+    fig.add_trace(go.Bar(
+        x=ranking['Nombre'], y=ranking['Cantidad'],
+        name='Casos EP', marker_color=colores, yaxis='y1'
+    ))
+
+    # Línea acumulada
+    fig.add_trace(go.Scatter(
+        x=ranking['Nombre'], y=ranking['PctAcum'],
+        name='% Acumulado', mode='lines+markers',
+        line=dict(color='#2E86AB', width=2),
+        marker=dict(size=5), yaxis='y2'
+    ))
+
+    # Línea de corte 80 %
+    fig.add_shape(
+        type='line', xref='paper', yref='y2',
+        x0=0, x1=1, y0=80, y1=80,
+        line=dict(color='orange', width=2, dash='dash')
+    )
+    fig.add_annotation(
+        xref='paper', yref='y2', x=1.01, y=80,
+        text='80 %', showarrow=False,
+        xanchor='left', font=dict(color='orange', size=11)
+    )
+
+    fig.update_layout(
+        title=titulo,
+        xaxis=dict(tickangle=-40),
+        yaxis=dict(title='Casos EP', side='left'),
+        yaxis2=dict(title='% Acumulado', side='right', overlaying='y',
+                    range=[0, 112], showgrid=False),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, x=0),
+        height=500, margin=dict(r=60)
+    )
+    return fig, ranking
+
+
+# ── 7. FUNCIÓN DETALLE COMPLETO ───────────────────────────────────────────────
 def mostrar_resumen_detallado(df_filtrado, seccion='tab1'):
     if len(df_filtrado) == 0:
         st.info("No hay asistencias técnicas para mostrar con los filtros seleccionados.")
@@ -514,9 +574,10 @@ if df_raw is not None:
     st.markdown("---")
 
     # ── TABS ──────────────────────────────────────────────────────────────────
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2, tab3, tab4 = st.tabs([
         "📊 Programación y Carga",
         "🔍 Análisis de Denuncias EP",
+        "📈 Pareto EP",
         "📋 Planilla Detallada"
     ])
 
@@ -654,8 +715,94 @@ if df_raw is not None:
         else:
             st.warning("⚠️ No se encontraron registros con Denuncias de EP en el filtro actual.")
 
-    # ── TAB 3: PLANILLA DETALLADA ─────────────────────────────────────────────
+    # ── TAB 3: PARETO EP ──────────────────────────────────────────────────────
     with tab3:
+        st.header("📈 Análisis de Pareto — Intervención Preventiva")
+        st.caption(
+            "Identifica los puestos de trabajo y tareas que concentran el mayor número "
+            "de denuncias EP (principio 80/20). Las barras **rojas** son las categorías "
+            "vitales que acumulan hasta el 80 % de los casos."
+        )
+
+        df_ep_pareto = df[df['Tiene EP']]
+
+        if len(df_ep_pareto) > 0:
+            # ── Sub-filtro por segmento corpóreo ──────────────────────────────
+            rank_seg_p = obtener_ranking_limpio(df_ep_pareto, 'segmentos')
+            opciones_seg_p = ["Todos"] + (rank_seg_p['Nombre'].tolist()
+                                          if not rank_seg_p.empty else [])
+
+            cf1, cf2 = st.columns([2, 2])
+            with cf1:
+                seg_pareto = st.selectbox(
+                    "Filtrar por Segmento Corpóreo:",
+                    opciones_seg_p, key="pareto_seg"
+                )
+            with cf2:
+                dimension = st.radio(
+                    "Analizar por:",
+                    ["Ocupaciones (Puestos de Trabajo)", "Tareas"],
+                    horizontal=True, key="pareto_dim"
+                )
+
+            # Aplicar sub-filtro de segmento
+            if seg_pareto != "Todos":
+                df_ep_pareto = df_ep_pareto[
+                    df_ep_pareto['segmentos'].str.contains(
+                        seg_pareto, case=False, na=False, regex=False
+                    )
+                ]
+
+            if len(df_ep_pareto) > 0:
+                if "Ocupaciones" in dimension:
+                    col_p, sep_p = 'ocupaciones', ' | '
+                    titulo_p = "Pareto · Puestos de Trabajo con EP"
+                else:
+                    col_p, sep_p = 'tareas', ','
+                    titulo_p = "Pareto · Tareas con EP"
+
+                if seg_pareto != "Todos":
+                    titulo_p += f" — {seg_pareto}"
+
+                fig_p, df_p = grafico_pareto(df_ep_pareto, col_p, titulo_p,
+                                             separador_secundario=sep_p)
+
+                if fig_p:
+                    st.plotly_chart(fig_p, use_container_width=True)
+
+                    # Métricas de concentración
+                    n_vital = int(df_p['Vital'].sum())
+                    n_total = len(df_p)
+                    pct_cat = round(n_vital / n_total * 100, 1) if n_total > 0 else 0
+                    casos_vital = int(df_p[df_p['Vital']]['Cantidad'].sum())
+                    pct_casos = round(casos_vital / df_p['Cantidad'].sum() * 100, 1) if df_p['Cantidad'].sum() > 0 else 0
+
+                    pm1, pm2, pm3 = st.columns(3)
+                    pm1.metric("Categorías vitales (🔴)", f"{n_vital} de {n_total}")
+                    pm2.metric("% de categorías vitales", f"{pct_cat} %")
+                    pm3.metric("Casos EP que concentran", f"{pct_casos} %")
+
+                    # Tabla detallada
+                    st.markdown("#### 📋 Detalle del Ranking")
+                    df_display = df_p[['Rank', 'Nombre', 'Cantidad', 'Pct', 'PctAcum', 'Vital']].copy()
+                    df_display.columns = ['Rank', 'Nombre', 'Casos EP', '% del Total', '% Acumulado', 'Vital 🔴']
+                    st.dataframe(
+                        df_display,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            'Vital 🔴': st.column_config.CheckboxColumn("Vital 🔴")
+                        }
+                    )
+                else:
+                    st.info("No hay datos suficientes para construir el Pareto.")
+            else:
+                st.info(f"No hay registros EP con segmento «{seg_pareto}» para los filtros actuales.")
+        else:
+            st.warning("⚠️ No se encontraron registros con Denuncias de EP en el filtro actual.")
+
+    # ── TAB 4: PLANILLA DETALLADA ─────────────────────────────────────────────
+    with tab4:
         st.subheader("Planificación Detallada 2026")
         col_fecha_display = 'Fecha Asistencia Técnica TMERT 2026*'
         cols_finales = [col_fecha_display, 'Región', 'Ergonomo', 'Nombre Empleador',
