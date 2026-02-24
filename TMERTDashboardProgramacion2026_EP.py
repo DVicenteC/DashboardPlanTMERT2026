@@ -441,6 +441,10 @@ df_raw = load_data()
 
 if df_raw is not None:
 
+    # ── DEBUG TEMPORAL: columnas disponibles ──────────────────────────────────
+    with st.expander("🔍 Debug: Columnas disponibles en el CSV", expanded=False):
+        st.write(sorted(df_raw.columns.tolist()))
+
     # ── SIDEBAR ───────────────────────────────────────────────────────────────
     st.sidebar.image("https://www.ist.cl/wp-content/themes/ist/img/logo-ist.png", width=100)
     st.sidebar.title("🔍 Filtros de Gestión")
@@ -457,9 +461,17 @@ if df_raw is not None:
     filtro_holding = st.sidebar.selectbox(
         "Holding", ["Todos"] + sorted(df_raw['Holding'].unique().tolist())
     )
-    filtro_empleador = st.sidebar.selectbox(
-        "Nombre Empleador", ["Todos"] + sorted(df_raw['Nombre Empleador'].unique().tolist())
-    )
+
+    # Detección defensiva de la columna de empleador (el nombre exacto se confirma via debug)
+    col_empleador = next((c for c in df_raw.columns if 'empleador' in c.lower()), None)
+    if col_empleador:
+        filtro_empleador = st.sidebar.selectbox(
+            "Nombre Empleador", ["Todos"] + sorted(df_raw[col_empleador].unique().tolist())
+        )
+    else:
+        filtro_empleador = "Todos"
+        st.sidebar.warning("⚠️ Columna 'Nombre Empleador' no encontrada")
+
     filtro_reg = st.sidebar.selectbox(
         "Región", ["Todas"] + sorted(df_raw['Región'].unique().tolist())
     )
@@ -481,8 +493,8 @@ if df_raw is not None:
         df = df[df['Gerencia - Cuenta Nacional'] == filtro_gerencia]
     if filtro_holding != "Todos":
         df = df[df['Holding'] == filtro_holding]
-    if filtro_empleador != "Todos":
-        df = df[df['Nombre Empleador'] == filtro_empleador]
+    if filtro_empleador != "Todos" and col_empleador:
+        df = df[df[col_empleador] == filtro_empleador]
     if filtro_reg != "Todas":
         df = df[df['Región'] == filtro_reg]
 
