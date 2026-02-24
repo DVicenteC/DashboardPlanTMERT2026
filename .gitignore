@@ -1,0 +1,16 @@
+# Claude Code
+.claude/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Entorno
+.env
+*.xlsx
+
+# Streamlit secrets (NUNCA subir al repo)
+.streamlit/secrets.toml
