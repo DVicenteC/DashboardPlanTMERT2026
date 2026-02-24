@@ -441,10 +441,6 @@ df_raw = load_data()
 
 if df_raw is not None:
 
-    # ── DEBUG TEMPORAL: columnas disponibles ──────────────────────────────────
-    with st.expander("🔍 Debug: Columnas disponibles en el CSV", expanded=False):
-        st.write(sorted(df_raw.columns.tolist()))
-
     # ── SIDEBAR ───────────────────────────────────────────────────────────────
     st.sidebar.image("https://www.ist.cl/wp-content/themes/ist/img/logo-ist.png", width=100)
     st.sidebar.title("🔍 Filtros de Gestión")
@@ -462,16 +458,10 @@ if df_raw is not None:
         "Holding", ["Todos"] + sorted(df_raw['Holding'].unique().tolist())
     )
 
-    # Detección defensiva de la columna de empleador (el nombre exacto se confirma via debug)
-    col_empleador = next((c for c in df_raw.columns if 'empleador' in c.lower()), None)
-    if col_empleador:
-        opciones_empleador = sorted(df_raw[col_empleador].dropna().astype(str).unique().tolist())
-        filtro_empleador = st.sidebar.selectbox(
-            "Nombre Empleador", ["Todos"] + opciones_empleador
-        )
-    else:
-        filtro_empleador = "Todos"
-        st.sidebar.warning("⚠️ Columna 'Nombre Empleador' no encontrada")
+    filtro_empleador = st.sidebar.selectbox(
+        "Nombre Empleador",
+        ["Todos"] + sorted(df_raw['Nombre Empleador'].dropna().astype(str).unique().tolist())
+    )
 
     filtro_reg = st.sidebar.selectbox(
         "Región", ["Todas"] + sorted(df_raw['Región'].unique().tolist())
@@ -494,8 +484,8 @@ if df_raw is not None:
         df = df[df['Gerencia - Cuenta Nacional'] == filtro_gerencia]
     if filtro_holding != "Todos":
         df = df[df['Holding'] == filtro_holding]
-    if filtro_empleador != "Todos" and col_empleador:
-        df = df[df[col_empleador] == filtro_empleador]
+    if filtro_empleador != "Todos":
+        df = df[df['Nombre Empleador'] == filtro_empleador]
     if filtro_reg != "Todas":
         df = df[df['Región'] == filtro_reg]
 
@@ -513,25 +503,13 @@ if df_raw is not None:
     )
 
     # ── MÉTRICAS GLOBALES ─────────────────────────────────────────────────────
-    m1, m2, m3, m4, m5 = st.columns(5)
+    m1, m2 = st.columns(2)
     with m1:
-        st.metric("Total Visitas", f"{len(df):,}")
-    with m2:
         st.metric("AT Programadas", f"{len(df_prog):,}")
-    with m3:
-        col_h = 'N° de trabajadores(as) a evaluar 2026 N° hombres'
-        col_m = 'N° de trabajadores(as) a evaluar 2026 N° mujeres'
-        if col_h in df_prog.columns and col_m in df_prog.columns:
-            total_trab = int(df_prog[col_h].fillna(0).sum() + df_prog[col_m].fillna(0).sum())
-            st.metric("Trabajadores a Evaluar", f"{total_trab:,}")
-        else:
-            st.metric("Trabajadores a Evaluar", "N/D")
-    with m4:
+    with m2:
         n_ep = contar_folios_distintos(df)
         n_emp_ep = df[df['Tiene EP']]['Nombre Empleador'].nunique() if n_ep > 0 else 0
         st.metric("Folios EP", n_ep, f"{n_emp_ep} empresa(s)", delta_color="inverse")
-    with m5:
-        st.metric("Regiones Impactadas", df['Región'].nunique())
 
     st.markdown("---")
 
