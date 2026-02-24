@@ -556,23 +556,7 @@ if df_raw is not None:
             rank_diag_gen = obtener_ranking_limpio(df_ep, 'diagnosticos')
             rank_emp_gen  = folios_por_empresa(df_ep)
 
-            """kpi1, kpi2, kpi3 = st.columns(3)
-            with kpi1:
-                top_seg = rank_seg_gen.iloc[0]['Nombre'] if not rank_seg_gen.empty else "N/D"
-                n_top_seg = int(rank_seg_gen.iloc[0]['Cantidad']) if not rank_seg_gen.empty else 0
-                st.metric("Segmento más frecuente", top_seg, f"{n_top_seg} casos")
-            with kpi2:
-                top_emp = rank_emp_gen.iloc[0]['Empresa'] if not rank_emp_gen.empty else "N/D"
-                n_top_emp = int(rank_emp_gen.iloc[0]['Folios EP']) if not rank_emp_gen.empty else 0
-                st.metric("Empresa con más EP", top_emp, f"{n_top_emp} folio(s)")
-            with kpi3:
-                if not rank_diag_gen.empty:
-                    nd = rank_diag_gen.iloc[0]['Nombre']
-                    top_diag = (nd[:45] + "…") if len(nd) > 45 else nd
-                    n_top_diag = int(rank_diag_gen.iloc[0]['Cantidad'])
-                else:
-                    top_diag, n_top_diag = "N/D", 0
-                st.metric("Diagnóstico más frecuente", top_diag, f"{n_top_diag} casos")"""
+            
 
             col_g1, col_g2 = st.columns(2)
             with col_g1:
