@@ -556,7 +556,7 @@ if df_raw is not None:
             rank_diag_gen = obtener_ranking_limpio(df_ep, 'diagnosticos')
             rank_emp_gen  = folios_por_empresa(df_ep)
 
-            kpi1, kpi2, kpi3 = st.columns(3)
+            """kpi1, kpi2, kpi3 = st.columns(3)
             with kpi1:
                 top_seg = rank_seg_gen.iloc[0]['Nombre'] if not rank_seg_gen.empty else "N/D"
                 n_top_seg = int(rank_seg_gen.iloc[0]['Cantidad']) if not rank_seg_gen.empty else 0
@@ -572,7 +572,7 @@ if df_raw is not None:
                     n_top_diag = int(rank_diag_gen.iloc[0]['Cantidad'])
                 else:
                     top_diag, n_top_diag = "N/D", 0
-                st.metric("Diagnóstico más frecuente", top_diag, f"{n_top_diag} casos")
+                st.metric("Diagnóstico más frecuente", top_diag, f"{n_top_diag} casos")"""
 
             col_g1, col_g2 = st.columns(2)
             with col_g1:
@@ -580,7 +580,7 @@ if df_raw is not None:
                     fig_seg = px.bar(
                         rank_seg_gen.head(10), x='Cantidad', y='Nombre', orientation='h',
                         color_discrete_sequence=['#E67E22'],
-                        title="Top Segmentos Corpóreos Afectados"
+                        title="Top Segmentos Corporal Afectados"
                     )
                     fig_seg.update_layout(yaxis={'categoryorder': 'total ascending'}, margin=dict(l=0))
                     st.plotly_chart(fig_seg, use_container_width=True)
@@ -599,20 +599,20 @@ if df_raw is not None:
             # NIVEL 2 & 3: EXPLORADOR
             st.subheader("🔍 Explorador: De lo General a lo Particular")
             st.caption(
-                "Elige un segmento corpóreo o un diagnóstico para ver en qué empresas, "
+                "Elige un segmento Corporal o un diagnóstico para ver en qué empresas, "
                 "puestos de trabajo y tareas se concentra ese riesgo."
             )
 
             modo = st.radio(
-                "Explorar por:", ["Segmento Corpóreo", "Diagnóstico"],
+                "Explorar por:", ["Segmento Corporal", "Diagnóstico"],
                 horizontal=True, key="modo_explor"
             )
-            col_explor = 'segmentos' if modo == "Segmento Corpóreo" else 'diagnosticos'
-            rank_base   = rank_seg_gen if modo == "Segmento Corpóreo" else rank_diag_gen
+            col_explor = 'segmentos' if modo == "Segmento Corporal" else 'diagnosticos'
+            rank_base   = rank_seg_gen if modo == "Segmento Corporal" else rank_diag_gen
 
             if not rank_base.empty:
                 seleccion = st.selectbox(
-                    f"Selecciona un {'segmento' if modo == 'Segmento Corpóreo' else 'diagnóstico'}:",
+                    f"Selecciona un {'segmento' if modo == 'Segmento Corporal' else 'diagnóstico'}:",
                     ["Todos"] + rank_base['Nombre'].tolist(),
                     key="explorador_selector"
                 )
