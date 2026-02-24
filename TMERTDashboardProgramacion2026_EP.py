@@ -465,8 +465,9 @@ if df_raw is not None:
     # Detección defensiva de la columna de empleador (el nombre exacto se confirma via debug)
     col_empleador = next((c for c in df_raw.columns if 'empleador' in c.lower()), None)
     if col_empleador:
+        opciones_empleador = sorted(df_raw[col_empleador].dropna().astype(str).unique().tolist())
         filtro_empleador = st.sidebar.selectbox(
-            "Nombre Empleador", ["Todos"] + sorted(df_raw[col_empleador].unique().tolist())
+            "Nombre Empleador", ["Todos"] + opciones_empleador
         )
     else:
         filtro_empleador = "Todos"
