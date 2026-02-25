@@ -239,15 +239,17 @@ def load_data():
         st.stop()
 
 # ── 4. FUNCIÓN AUXILIAR RANKING (EP) ─────────────────────────────────────────
-def obtener_ranking_limpio(df, columna, separador_principal="||", separador_secundario=","):
+def obtener_ranking_limpio(df, columna, separador_principal="||", separador_secundario=",",
+                           separadores_extra=None):
     """
     Cuenta la frecuencia de elementos atómicos en una columna multi-valor.
 
-    Estructura de los datos (crear_resumen_estructurado sin prefijos):
+    Estructura de los datos:
       - Separador entre registros de folio : ' || '
       - Separador secundario interno       :
-          · segmentos, tareas, diagnósticos → ','
-          · ocupaciones                     → ' | '
+          · tareas, diagnósticos  → ','
+          · ocupaciones           → ' | '
+          · segmentos             → ' ' (espacio)  → pasar separadores_extra=[" "]
     """
     if columna not in df.columns:
         return pd.DataFrame(columns=['Nombre', 'Cantidad'])
@@ -259,6 +261,10 @@ def obtener_ranking_limpio(df, columna, separador_principal="||", separador_secu
 
     series = datos.str.split(separador_principal, regex=False).explode().str.strip()
     series = series.str.split(separador_secundario, regex=False).explode().str.strip()
+
+    if separadores_extra:
+        for sep in separadores_extra:
+            series = series.str.split(sep, regex=False).explode().str.strip()
 
     conteo = series[series != ""].value_counts().reset_index()
     conteo.columns = ['Nombre', 'Cantidad']
@@ -505,26 +511,30 @@ if df_raw is not None:
     st.sidebar.image("https://www.ist.cl/wp-content/themes/ist/img/logo-ist.png", width=100)
     st.sidebar.title("🔍 Filtros de Gestión")
 
-    solo_ep = st.sidebar.toggle("🚨 Ver solo Centros con EP", value=False)
+    solo_ep = st.sidebar.toggle("🚨 Ver solo centros con denuncias de EP", value=False)
+
+    # Cuando el toggle EP está activo, las listas de filtros se restringen
+    # a los registros que tienen denuncias de EP (cascada coherente)
+    df_base = df_raw[df_raw['Tiene EP']] if solo_ep else df_raw
 
     filtro_ergo = st.sidebar.selectbox(
-        "Especialista", ["Todos"] + sorted(df_raw['Ergonomo'].unique().tolist())
+        "Especialista", ["Todos"] + sorted(df_base['Ergonomo'].dropna().unique().tolist())
     )
     filtro_gerencia = st.sidebar.selectbox(
         "Gerencia - Cuenta Nacional",
-        ["Todas"] + sorted(df_raw['Gerencia - Cuenta Nacional'].unique().tolist())
+        ["Todas"] + sorted(df_base['Gerencia - Cuenta Nacional'].dropna().unique().tolist())
     )
     filtro_holding = st.sidebar.selectbox(
-        "Holding", ["Todos"] + sorted(df_raw['Holding'].unique().tolist())
+        "Holding", ["Todos"] + sorted(df_base['Holding'].dropna().unique().tolist())
     )
 
     filtro_empleador = st.sidebar.selectbox(
         "Nombre Empleador",
-        ["Todos"] + sorted(df_raw['Nombre Empleador'].dropna().astype(str).unique().tolist())
+        ["Todos"] + sorted(df_base['Nombre Empleador'].dropna().astype(str).unique().tolist())
     )
 
     filtro_reg = st.sidebar.selectbox(
-        "Región", ["Todas"] + sorted(df_raw['Región'].unique().tolist())
+        "Región", ["Todas"] + sorted(df_base['Región'].dropna().unique().tolist())
     )
 
     meses_espanol = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
@@ -613,22 +623,21 @@ if df_raw is not None:
         if len(df_ep) > 0:
 
             # NIVEL 1: VISTA GENERAL
-            rank_seg_gen  = obtener_ranking_limpio(df_ep, 'segmentos')
+            # separadores_extra=[" "] para explotar "HOMBRO_DER CODO_DER" en valores atómicos
+            rank_seg_gen  = obtener_ranking_limpio(df_ep, 'segmentos', separadores_extra=[" "])
             rank_diag_gen = obtener_ranking_limpio(df_ep, 'diagnosticos')
             rank_emp_gen  = folios_por_empresa(df_ep)
 
-            
-
             col_g1, col_g2 = st.columns(2)
             with col_g1:
-                if not rank_seg_gen.empty:
-                    fig_seg = px.bar(
-                        rank_seg_gen.head(10), x='Cantidad', y='Nombre', orientation='h',
+                if not rank_diag_gen.empty:
+                    fig_diag = px.bar(
+                        rank_diag_gen.head(10), x='Cantidad', y='Nombre', orientation='h',
                         color_discrete_sequence=['#E67E22'],
-                        title="Top Segmentos Corporal Afectados"
+                        title="Top Diagnósticos en Denuncias EP"
                     )
-                    fig_seg.update_layout(yaxis={'categoryorder': 'total ascending'}, margin=dict(l=0))
-                    st.plotly_chart(fig_seg, use_container_width=True)
+                    fig_diag.update_layout(yaxis={'categoryorder': 'total ascending'}, margin=dict(l=0))
+                    st.plotly_chart(fig_diag, use_container_width=True)
             with col_g2:
                 if not rank_emp_gen.empty:
                     fig_emp = px.bar(
@@ -727,15 +736,16 @@ if df_raw is not None:
         df_ep_pareto = df[df['Tiene EP']]
 
         if len(df_ep_pareto) > 0:
-            # ── Sub-filtro por segmento corpóreo ──────────────────────────────
-            rank_seg_p = obtener_ranking_limpio(df_ep_pareto, 'segmentos')
+            # ── Sub-filtro por segmento corporal ──────────────────────────────
+            # separadores_extra=[" "] para obtener valores atómicos (ej. HOMBRO_DER, no combinaciones)
+            rank_seg_p = obtener_ranking_limpio(df_ep_pareto, 'segmentos', separadores_extra=[" "])
             opciones_seg_p = ["Todos"] + (rank_seg_p['Nombre'].tolist()
                                           if not rank_seg_p.empty else [])
 
             cf1, cf2 = st.columns([2, 2])
             with cf1:
                 seg_pareto = st.selectbox(
-                    "Filtrar por Segmento Corpóreo:",
+                    "Filtrar por Segmento Corporal:",
                     opciones_seg_p, key="pareto_seg"
                 )
             with cf2:
@@ -794,6 +804,74 @@ if df_raw is not None:
                             'Vital 🔴': st.column_config.CheckboxColumn("Vital 🔴")
                         }
                     )
+
+                    # ── EXPLORADOR: De la prioridad al detalle ────────────────
+                    st.divider()
+                    st.subheader("🔍 Explorador: Investiga una Categoría del Pareto")
+                    st.caption(
+                        "Selecciona un segmento corporal o diagnóstico para ver en qué empresas, "
+                        "puestos y tareas se concentra ese riesgo — usando el mismo subconjunto "
+                        "de registros que el Pareto de arriba."
+                    )
+
+                    rank_diag_p = obtener_ranking_limpio(df_ep_pareto, 'diagnosticos')
+                    modo_p = st.radio(
+                        "Explorar por:", ["Segmento Corporal", "Diagnóstico"],
+                        horizontal=True, key="modo_explor_pareto"
+                    )
+                    col_explor_p = 'segmentos' if modo_p == "Segmento Corporal" else 'diagnosticos'
+                    rank_base_p  = rank_seg_p if modo_p == "Segmento Corporal" else rank_diag_p
+
+                    if not rank_base_p.empty:
+                        sel_p = st.selectbox(
+                            f"Selecciona un {'segmento corporal' if modo_p == 'Segmento Corporal' else 'diagnóstico'}:",
+                            ["Todos"] + rank_base_p['Nombre'].tolist(),
+                            key="explorador_pareto_selector"
+                        )
+
+                        df_drill_p = df_ep_pareto.copy() if sel_p == "Todos" else df_ep_pareto[
+                            df_ep_pareto[col_explor_p].str.contains(sel_p, case=False, na=False, regex=False)
+                        ]
+
+                        if len(df_drill_p) > 0:
+                            n_f_p = contar_folios_distintos(df_drill_p)
+                            n_e_p = df_drill_p['Nombre Empleador'].nunique()
+                            label_p = "todos los registros EP" if sel_p == "Todos" else f"«{sel_p}»"
+                            st.markdown(
+                                f"**{n_f_p} folio(s)** para {label_p} "
+                                f"— en **{n_e_p} empresa(s)** · {len(df_drill_p)} visita(s)"
+                            )
+
+                            pd1, pd2, pd3 = st.columns(3)
+                            with pd1:
+                                st.markdown("**🏢 Empresas**")
+                                st.dataframe(folios_por_empresa(df_drill_p),
+                                             use_container_width=True, hide_index=True)
+                            with pd2:
+                                st.markdown("**💼 Puestos de Trabajo**")
+                                r_oc_p = obtener_ranking_limpio(
+                                    df_drill_p, 'ocupaciones', separador_secundario=' | '
+                                ).rename(columns={'Nombre': 'Puesto', 'Cantidad': 'Casos'})
+                                st.dataframe(r_oc_p, use_container_width=True, hide_index=True) \
+                                    if not r_oc_p.empty else st.info("Sin datos de puestos.")
+                            with pd3:
+                                st.markdown("**🛠️ Tareas Asociadas**")
+                                r_ta_p = obtener_ranking_limpio(df_drill_p, 'tareas').rename(
+                                    columns={'Nombre': 'Tarea', 'Cantidad': 'Casos'}
+                                )
+                                st.dataframe(r_ta_p, use_container_width=True, hide_index=True) \
+                                    if not r_ta_p.empty else st.info("Sin datos de tareas.")
+
+                            with st.expander("📋 Ver registros individuales"):
+                                cols_d = ['Nombre Empleador', 'Nombre CT', 'Región', 'Ergonomo',
+                                          'segmentos', 'ocupaciones', 'tareas', 'diagnosticos', 'folios']
+                                cols_d = [c for c in cols_d if c in df_drill_p.columns]
+                                st.dataframe(df_drill_p[cols_d], use_container_width=True, hide_index=True)
+                        else:
+                            st.info(f"No hay registros con «{sel_p}» en el subconjunto actual.")
+                    else:
+                        st.info("No hay datos suficientes para el explorador.")
+
                 else:
                     st.info("No hay datos suficientes para construir el Pareto.")
             else:
