@@ -270,7 +270,26 @@ def obtener_ranking_limpio(df, columna, separador_principal="||", separador_secu
     conteo.columns = ['Nombre', 'Cantidad']
     return conteo
 
-# ── 5. CONTEO DE FOLIOS EP ───────────────────────────────────────────────────
+# ── 5. ORDEN ANATÓMICO DE SEGMENTOS ──────────────────────────────────────────
+# Proximal → distal, luego Derecho → Izquierdo; resto al final (alphabético)
+ORDEN_SEGMENTOS = [
+    "HOMBRO_DER", "HOMBRO_IZQ",
+    "CODO_DER",   "CODO_IZQ",
+    "MUÑECA_DER", "MUÑECA_IZQ",
+    "MANO_DER",   "MANO_IZQ",
+    "DEDOS_DER",  "DEDOS_IZQ",
+    "PULGAR_DER", "PULGAR_IZQ",
+    "CERVICAL",
+    "LUMBAR",
+]
+_ORDEN_IDX = {s: i for i, s in enumerate(ORDEN_SEGMENTOS)}
+
+def ordenar_segmentos(lista: list[str]) -> list[str]:
+    """Ordena segmentos según criterio anatómico proximal→distal, DER→IZQ."""
+    return sorted(lista, key=lambda s: (_ORDEN_IDX.get(s.upper(), len(ORDEN_SEGMENTOS)), s))
+
+
+# ── 6. CONTEO DE FOLIOS EP ───────────────────────────────────────────────────
 def contar_folios_distintos(df_sub):
     """
     Cuenta el número de folios EP únicos presentes en un subconjunto de filas.
@@ -665,9 +684,14 @@ if df_raw is not None:
             rank_base   = rank_seg_gen if modo == "Segmento Corporal" else rank_diag_gen
 
             if not rank_base.empty:
+                # Orden anatómico para segmentos; alfabético para diagnósticos
+                if modo == "Segmento Corporal":
+                    _opts = ["Todos"] + ordenar_segmentos(rank_base['Nombre'].tolist())
+                else:
+                    _opts = ["Todos"] + sorted(rank_base['Nombre'].tolist())
                 seleccion = st.selectbox(
-                    f"Selecciona un {'segmento' if modo == 'Segmento Corporal' else 'diagnóstico'}:",
-                    ["Todos"] + rank_base['Nombre'].tolist(),
+                    f"Selecciona un {'segmento corporal' if modo == 'Segmento Corporal' else 'diagnóstico'}:",
+                    _opts,
                     key="explorador_selector"
                 )
 
@@ -726,7 +750,6 @@ if df_raw is not None:
 
     # ── TAB 3: PARETO EP ──────────────────────────────────────────────────────
     with tab3:
-        st.write("Muestra raw segmentos:", df[df['Tiene EP']]['segmentos'].dropna().head(5).tolist())
         st.header("📈 Análisis de Pareto — Intervención Preventiva")
         st.caption(
             "Identifica los puestos de trabajo y tareas que concentran el mayor número "
@@ -740,7 +763,7 @@ if df_raw is not None:
             # ── Sub-filtro por segmento corporal ──────────────────────────────
             # separadores_extra=[" "] para obtener valores atómicos (ej. HOMBRO_DER, no combinaciones)
             rank_seg_p = obtener_ranking_limpio(df_ep_pareto, 'segmentos', separadores_extra=[" "])
-            opciones_seg_p = ["Todos"] + (rank_seg_p['Nombre'].tolist()
+            opciones_seg_p = ["Todos"] + (ordenar_segmentos(rank_seg_p['Nombre'].tolist())
                                           if not rank_seg_p.empty else [])
 
             cf1, cf2 = st.columns([2, 2])
@@ -824,9 +847,14 @@ if df_raw is not None:
                     rank_base_p  = rank_seg_p if modo_p == "Segmento Corporal" else rank_diag_p
 
                     if not rank_base_p.empty:
+                        # Orden anatómico para segmentos; alfabético para diagnósticos
+                        if modo_p == "Segmento Corporal":
+                            _opts_p = ["Todos"] + ordenar_segmentos(rank_base_p['Nombre'].tolist())
+                        else:
+                            _opts_p = ["Todos"] + sorted(rank_base_p['Nombre'].tolist())
                         sel_p = st.selectbox(
                             f"Selecciona un {'segmento corporal' if modo_p == 'Segmento Corporal' else 'diagnóstico'}:",
-                            ["Todos"] + rank_base_p['Nombre'].tolist(),
+                            _opts_p,
                             key="explorador_pareto_selector"
                         )
 
@@ -853,15 +881,19 @@ if df_raw is not None:
                                 r_oc_p = obtener_ranking_limpio(
                                     df_drill_p, 'ocupaciones', separador_secundario=' | '
                                 ).rename(columns={'Nombre': 'Puesto', 'Cantidad': 'Casos'})
-                                st.dataframe(r_oc_p, use_container_width=True, hide_index=True) \
-                                    if not r_oc_p.empty else st.info("Sin datos de puestos.")
+                                if not r_oc_p.empty:
+                                    st.dataframe(r_oc_p, use_container_width=True, hide_index=True)
+                                else:
+                                    st.info("Sin datos de puestos.")
                             with pd3:
                                 st.markdown("**🛠️ Tareas Asociadas**")
                                 r_ta_p = obtener_ranking_limpio(df_drill_p, 'tareas').rename(
                                     columns={'Nombre': 'Tarea', 'Cantidad': 'Casos'}
                                 )
-                                st.dataframe(r_ta_p, use_container_width=True, hide_index=True) \
-                                    if not r_ta_p.empty else st.info("Sin datos de tareas.")
+                                if not r_ta_p.empty:
+                                    st.dataframe(r_ta_p, use_container_width=True, hide_index=True)
+                                else:
+                                    st.info("Sin datos de tareas.")
 
                             with st.expander("📋 Ver registros individuales"):
                                 cols_d = ['Nombre Empleador', 'Nombre CT', 'Región', 'Ergonomo',
