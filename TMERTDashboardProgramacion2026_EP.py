@@ -726,6 +726,7 @@ if df_raw is not None:
 
     # ── TAB 3: PARETO EP ──────────────────────────────────────────────────────
     with tab3:
+        st.write("Muestra raw segmentos:", df[df['Tiene EP']]['segmentos'].dropna().head(5).tolist())
         st.header("📈 Análisis de Pareto — Intervención Preventiva")
         st.caption(
             "Identifica los puestos de trabajo y tareas que concentran el mayor número "
