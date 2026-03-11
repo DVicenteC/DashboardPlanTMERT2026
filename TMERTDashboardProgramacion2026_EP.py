@@ -159,6 +159,30 @@ def parsear_fecha_flexible(serie):
 
 # ── 4. CARGA DE DATOS ─────────────────────────────────────────────────────────
 @st.cache_data(ttl=300)
+def cargar_datos_seguimiento_tmert():
+    """Carga datos de seguimiento TMERT desde Google Sheets."""
+    try:
+        url_seg = st.secrets["gsheets"].get("seguimiento_tmert")
+        if not url_seg:
+            return pd.DataFrame()
+        
+        export_url = construir_url_exportacion(url_seg)
+        df = pd.read_csv(export_url, dtype=str)
+        
+        if df.empty:
+            return pd.DataFrame()
+            
+        df.columns = df.columns.str.strip()
+        
+        # Parsear fechas (Día Primero)
+        cols_fecha = [c for c in df.columns if 'Fecha' in c or 'Prescripción' in c]
+        for col in cols_fecha:
+            df[col] = parsear_fecha_flexible(df[col])
+            
+        return df
+    except Exception:
+        return pd.DataFrame()
+
 def load_data():
     try:
         # Leer URL desde secrets
@@ -523,6 +547,7 @@ def mostrar_resumen_detallado(df_filtrado, seccion='tab1'):
 
 # ── 7. INTERFAZ PRINCIPAL ─────────────────────────────────────────────────────
 df_raw = load_data()
+df_seg_raw = cargar_datos_seguimiento_tmert()
 
 if df_raw is not None:
 
@@ -532,28 +557,34 @@ if df_raw is not None:
 
     solo_ep = st.sidebar.toggle("🚨 Ver solo centros con denuncias de EP", value=False)
 
-    # Cuando el toggle EP está activo, las listas de filtros se restringen
-    # a los registros que tienen denuncias de EP (cascada coherente)
-    df_base = df_raw[df_raw['Tiene EP']] if solo_ep else df_raw
+    # El filtro base depende de si hay datos de seguimiento para unificar ergonomos
+    erg_list = sorted(df_raw['Ergonomo'].dropna().unique().tolist())
+    if not df_seg_raw.empty and 'Ergonomo' in df_seg_raw.columns:
+        erg_seg = df_seg_raw['Ergonomo'].dropna().unique().tolist()
+        erg_list = sorted(list(set(erg_list + erg_seg)))
 
     filtro_ergo = st.sidebar.selectbox(
-        "Especialista", ["Todos"] + sorted(df_base['Ergonomo'].dropna().unique().tolist())
+        "Especialista / Ergónomo", ["Todos"] + erg_list
     )
+    
+    # Restringir listas de filtros según el ergonomo seleccionado para mayor fluidez
+    df_f = df_raw.copy()
+    if filtro_ergo != "Todos":
+        df_f = df_f[df_f['Ergonomo'] == filtro_ergo]
+
     filtro_gerencia = st.sidebar.selectbox(
         "Gerencia - Cuenta Nacional",
-        ["Todas"] + sorted(df_base['Gerencia - Cuenta Nacional'].dropna().unique().tolist())
+        ["Todas"] + sorted(df_f['Gerencia - Cuenta Nacional'].dropna().unique().tolist())
     )
     filtro_holding = st.sidebar.selectbox(
-        "Holding", ["Todos"] + sorted(df_base['Holding'].dropna().unique().tolist())
+        "Holding", ["Todos"] + sorted(df_f['Holding'].dropna().unique().tolist())
     )
-
     filtro_empleador = st.sidebar.selectbox(
         "Nombre Empleador",
-        ["Todos"] + sorted(df_base['Nombre Empleador'].dropna().astype(str).unique().tolist())
+        ["Todos"] + sorted(df_f['Nombre Empleador'].dropna().astype(str).unique().tolist())
     )
-
     filtro_reg = st.sidebar.selectbox(
-        "Región", ["Todas"] + sorted(df_base['Región'].dropna().unique().tolist())
+        "Región", ["Todas"] + sorted(df_f['Región'].dropna().unique().tolist())
     )
 
     meses_espanol = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
@@ -565,18 +596,34 @@ if df_raw is not None:
 
     # ── APLICAR FILTROS ───────────────────────────────────────────────────────
     df = df_raw.copy()
+    df_seg = df_seg_raw.copy() if not df_seg_raw.empty else pd.DataFrame()
+
     if solo_ep:
         df = df[df['Tiene EP'] == True]
     if filtro_ergo != "Todos":
         df = df[df['Ergonomo'] == filtro_ergo]
+        if not df_seg.empty and 'Ergonomo' in df_seg.columns:
+            df_seg = df_seg[df_seg['Ergonomo'] == filtro_ergo]
+            
     if filtro_gerencia != "Todas":
         df = df[df['Gerencia - Cuenta Nacional'] == filtro_gerencia]
+        if not df_seg.empty and 'Gerencia - Cuenta Nacional' in df_seg.columns:
+            df_seg = df_seg[df_seg['Gerencia - Cuenta Nacional'] == filtro_gerencia]
+            
     if filtro_holding != "Todos":
         df = df[df['Holding'] == filtro_holding]
+        if not df_seg.empty and 'Holding' in df_seg.columns:
+            df_seg = df_seg[df_seg['Holding'] == filtro_holding]
+            
     if filtro_empleador != "Todos":
         df = df[df['Nombre Empleador'] == filtro_empleador]
+        if not df_seg.empty and 'Nombre Empleador' in df_seg.columns:
+            df_seg = df_seg[df_seg['Nombre Empleador'] == filtro_empleador]
+            
     if filtro_reg != "Todas":
         df = df[df['Región'] == filtro_reg]
+        if not df_seg.empty and 'Región' in df_seg.columns:
+            df_seg = df_seg[df_seg['Región'] == filtro_reg]
 
     # df_prog: registros con fecha programada (para tab Programación)
     df_prog = df[df['fecha'].notna()].copy()
@@ -587,15 +634,22 @@ if df_raw is not None:
     # ── TÍTULO ────────────────────────────────────────────────────────────────
     st.title("🏥 Dashboard TMERT 2026 - Gestión Integral")
     st.markdown(
-        f"**IST · Circular SUSESO 3900** | "
+        f"**IST · Especialidades Técnicas** | "
         f"Datos actualizados: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
     )
 
     # ── MÉTRICAS GLOBALES ─────────────────────────────────────────────────────
-    m1, m2 = st.columns(2)
+    m1, m2, m3 = st.columns(3)
     with m1:
         st.metric("AT Programadas", f"{len(df_prog):,}")
     with m2:
+        if not df_seg.empty and 'Fecha real AT' in df_seg.columns:
+            realizadas = df_seg['Fecha real AT'].notna().sum()
+            porc = (realizadas / len(df_prog) * 100) if len(df_prog) > 0 else 0
+            st.metric("AT Realizadas", f"{realizadas:,}", f"{porc:.1f}% del programa")
+        else:
+            st.metric("AT Realizadas", "S/D")
+    with m3:
         n_ep = contar_folios_distintos(df)
         n_emp_ep = df[df['Tiene EP']]['Nombre Empleador'].nunique() if n_ep > 0 else 0
         st.metric("Folios EP", n_ep, f"{n_emp_ep} empresa(s)", delta_color="inverse")
@@ -603,14 +657,17 @@ if df_raw is not None:
     st.markdown("---")
 
     # ── TABS ──────────────────────────────────────────────────────────────────
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "📊 Programación y Carga",
+    tabs = st.tabs([
+        "📊 Programación",
+        "✅ Estado Seguimiento",
+        "👨‍⚕️ Indicadores por Profesional",
         "🔍 Análisis de Denuncias EP",
         "📈 Pareto EP",
         "📋 Planilla Detallada"
     ])
+    tab1, tab_seg, tab_ind, tab2, tab3, tab4 = tabs
 
-    # ── TAB 1: PROGRAMACIÓN Y CARGA ───────────────────────────────────────────
+    # ── TAB 1: PROGRAMACIÓN ───────────────────────────────────────────────────
     with tab1:
         if len(df_prog) > 0:
             col_c1, col_c2 = st.columns(2)
@@ -633,6 +690,119 @@ if df_raw is not None:
                 mostrar_resumen_detallado(df_prog, seccion='tab1')
         else:
             st.warning("⚠️ No hay registros con fecha programada para los filtros seleccionados.")
+
+    # ── TAB: ESTADO SEGUIMIENTO ───────────────────────────────────────────────
+    with tab_seg:
+        if df_seg.empty:
+            st.info("ℹ️ Sube un archivo de seguimiento para activar esta vista.")
+        else:
+            st.subheader("🎯 Cumplimiento Meta 7.1 (Circular 3900)")
+            
+            # Cálculo de meta real (4 pilares cumplidos)
+            total_plan = len(df_seg)
+            cumplen_meta = df_seg['Meta 7.1 Cumplida'].sum() if 'Meta 7.1 Cumplida' in df_seg.columns else 0
+            avance_meta = (cumplen_meta / total_plan) if total_plan > 0 else 0
+            
+            # Barra de progreso estilizada
+            st.progress(avance_meta, text=f"Progreso hacia Meta Anual: {avance_meta*100:.1f}% ({cumplen_meta}/{total_plan} CTs)")
+            
+            # Métricas de avance
+            c1, c2, c3, c4 = st.columns(4)
+            real_at = df_seg['Fecha real AT'].notna().sum()
+            antes = (df_seg['Estado AT'] == 'Realizada antes de fecha').sum()
+            atrasadas = (df_seg['Estado AT'] == 'Pendiente atrasada').sum()
+            
+            c1.metric("Universo Plan", f"{total_plan:,}")
+            c2.metric("AT con Registro", f"{real_at:,}", f"{(real_at/total_plan*100):.1f}%")
+            c3.metric("Meta 7.1 Completa", f"{cumplen_meta:,}", "4 Pilares OK")
+            c4.metric("Pendientes Atrasadas", f"{atrasadas:,}", delta_color="inverse")
+            
+            st.divider()
+            
+            # Detalle por Pilares
+            st.markdown("#### 🧱 Desglose por Pilares de Cumplimiento")
+            cp1, cp2, cp3, cp4 = st.columns(4)
+            for col, label, p_col in zip([cp1, cp2, cp3, cp4], 
+                                        ["P1: Difusión", "P2: Cap + MK", "P3: Diseño Cap", "P4: Prescripción"],
+                                        ["Pilar 1 - Difusión", "Pilar 2 - Capacitación MK", "Pilar 3 - Diseño Cap Pract", "Pilar 4 - Prescripción Caract"]):
+                if p_col in df_seg.columns:
+                    val = df_seg[p_col].sum()
+                    col.metric(label, f"{val:,}", f"{(val/total_plan*100):.0f}%")
+
+            st.divider()
+            
+            col_chart, col_table = st.columns([1, 2])
+            with col_chart:
+                # Gráfico de torta de estados
+                estados = df_seg['Estado AT'].value_counts().reset_index()
+                fig_est = px.pie(estados, names='Estado AT', values='count', 
+                                title='Distribución por Estado SUSESO',
+                                color_discrete_sequence=px.colors.qualitative.Pastel)
+                st.plotly_chart(fig_est, use_container_width=True)
+                
+            with col_table:
+                st.markdown("**Resumen Meta 7.1 por Región**")
+                if 'Meta 7.1 Cumplida' in df_seg.columns:
+                    res_reg = df_seg.groupby('Región')['Meta 7.1 Cumplida'].value_counts().unstack(fill_value=0)
+                    st.dataframe(res_reg, use_container_width=True)
+                else:
+                    st.write("Data de meta no disponible.")
+
+            with st.expander("🔍 Ver Detalle de Seguimiento y Pilares", expanded=False):
+                cols_s = ['Región', 'Nombre Empleador', 'ID-CT', 'Nombre CT', 'Meta 7.1 Cumplida',
+                        'Pilar 1 - Difusión', 'Pilar 2 - Capacitación MK', 'Pilar 3 - Diseño Cap Pract', 'Pilar 4 - Prescripción Caract',
+                        'Estado Seguimiento Prescripción Caracterización (sigeco)']
+                cols_s = [c for c in cols_s if c in df_seg.columns]
+                st.dataframe(df_seg[cols_s], use_container_width=True, hide_index=True)
+
+    # ── TAB: INDICADORES POR PROFESIONAL ─────────────────────────────────────
+    with tab_ind:
+        if df_seg.empty:
+            st.info("ℹ️ Se requiere data de seguimiento para calcular indicadores por profesional.")
+        else:
+            st.subheader("👨‍⚕️ Indicadores de Gestión Mensual")
+            
+            # Agrupar por Profesional (Ergónomo)
+            df_is = df_seg.copy()
+            
+            # Definir columnas de métricas
+            # Nro. de actividades en SIGECO = Fecha real AT
+            # Nro. de actividades en GOPIST = Identificaciones Iniciales + Avanzadas (istprod)
+            # Nro. de registros en MK = Prescripciones
+            
+            ind = df_is.groupby('Ergonomo').agg({
+                'Fecha real AT': 'count',
+                'Fecha Últ. Identificación Inicial (istprod)': 'count',
+                'Fecha Identificación Avanzada (real)': 'count',
+                'Prescripción Evaluación Inicial (sigeco)': 'count',
+                'Fecha Prescripción Eval Avanzada (sigeco)': 'count',
+                'Estado AT': lambda x: (x == 'Realizada en fecha').sum() + (x == 'Realizada antes de fecha').sum()
+            }).reset_index()
+            
+            ind.columns = ['Ergónomo', 'SIGECO (ATs)', 'GOPIST (Ini)', 'GOPIST (Avz)', 
+                          'MK (Ini)', 'MK (Avz)', 'Meta 7.1 (Cumple)']
+            
+            # Totales
+            ind['Total GOPIST'] = ind['GOPIST (Ini)'] + ind['GOPIST (Avz)']
+            ind['Total MK'] = ind['MK (Ini)'] + ind['MK (Avz)']
+            
+            # Reordenar
+            ind = ind[['Ergónomo', 'SIGECO (ATs)', 'Total GOPIST', 'Total MK', 'Meta 7.1 (Cumple)']]
+            
+            # Mostrar Tabla de Ranking
+            st.dataframe(ind.sort_values('SIGECO (ATs)', ascending=False), use_container_width=True, hide_index=True)
+            
+            # Gráficos Comparativos
+            st.divider()
+            col_i1, col_i2 = st.columns(2)
+            with col_i1:
+                fig_i1 = px.bar(ind, x='Ergónomo', y=['SIGECO (ATs)', 'Meta 7.1 (Cumple)'], 
+                               barmode='group', title='SIGECO vs Meta 7.1')
+                st.plotly_chart(fig_i1, use_container_width=True)
+            with col_i2:
+                fig_i2 = px.bar(ind, x='Ergónomo', y=['Total GOPIST', 'Total MK'], 
+                               barmode='group', title='GOPIST vs MK')
+                st.plotly_chart(fig_i2, use_container_width=True)
 
     # ── TAB 2: ANÁLISIS DE DENUNCIAS EP ───────────────────────────────────────
     with tab2:
