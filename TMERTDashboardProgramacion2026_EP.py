@@ -181,8 +181,16 @@ def cargar_datos_seguimiento_tmert():
             
         # Convertir columnas booleanas (Pilar 1, 2, 3, 4, Meta 7.1) a booleanos reales
         cols_bool = [c for c in df.columns if 'Pilar' in c or 'Cumplida' in c or 'Validado' in c]
+        bool_map = {
+            'TRUE': True, 'FALSE': False, 
+            '1': True, '0': False,
+            'VERDADERO': True, 'FALSO': False,
+            'VERDADERO ': True, 'FALSO ': False,
+            'NAN': False, 'NONE': False
+        }
         for col in cols_bool:
-            df[col] = df[col].astype(str).str.upper().map({'TRUE': True, 'FALSE': False, '1': True, '0': False}).fillna(False)
+            # Asegurar limpieza y mapeo robusto
+            df[col] = df[col].astype(str).str.upper().str.strip().map(bool_map).fillna(False)
 
         return df
     except Exception:
