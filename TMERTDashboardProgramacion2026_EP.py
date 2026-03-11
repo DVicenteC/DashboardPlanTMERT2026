@@ -179,6 +179,11 @@ def cargar_datos_seguimiento_tmert():
         for col in cols_fecha:
             df[col] = parsear_fecha_flexible(df[col])
             
+        # Convertir columnas booleanas (Pilar 1, 2, 3, 4, Meta 7.1) a booleanos reales
+        cols_bool = [c for c in df.columns if 'Pilar' in c or 'Cumplida' in c or 'Validado' in c]
+        for col in cols_bool:
+            df[col] = df[col].astype(str).str.upper().map({'TRUE': True, 'FALSE': False, '1': True, '0': False}).fillna(False)
+
         return df
     except Exception:
         return pd.DataFrame()
