@@ -564,78 +564,148 @@ df_seg_raw = cargar_datos_seguimiento_tmert()
 
 if df_raw is not None:
 
-    # ── SIDEBAR ───────────────────────────────────────────────────────────────
+    # ── SIDEBAR — Filtros Bidireccionales Robustos (Cross-filtering) ──────────
     st.sidebar.image("https://www.ist.cl/wp-content/themes/ist/img/logo-ist.png", width=100)
     st.sidebar.title("🔍 Filtros de Gestión")
 
     solo_ep = st.sidebar.toggle("🚨 Ver solo centros con denuncias de EP", value=False)
 
-    # El filtro base depende de si hay datos de seguimiento para unificar ergonomos
-    erg_list = sorted(df_raw['Ergonomo'].dropna().unique().tolist())
-    if not df_seg_raw.empty and 'Ergonomo' in df_seg_raw.columns:
-        erg_seg = df_seg_raw['Ergonomo'].dropna().unique().tolist()
-        erg_list = sorted(list(set(erg_list + erg_seg)))
+    # Base: dataset de referencia (el toggle EP actúa como pre-filtro crítico)
+    _base_t = df_raw[df_raw['Tiene EP'] == True].copy() if solo_ep else df_raw.copy()
 
+    # ── 1. Inicialización de session_state ────────────────────────────────────
+    _defaults_t = {
+        'tmert_ergo':     'Todos',
+        'tmert_gerencia': 'Todas',
+        'tmert_holding':  'Todos',
+        'tmert_emplea':   'Todos',
+        'tmert_region':   'Todas',
+    }
+    for k, v in _defaults_t.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+    # Reset pendiente (del botón)
+    if st.session_state.get('_tmert_reset', False):
+        for k, v in _defaults_t.items():
+            st.session_state[k] = v
+        st.session_state['_tmert_reset'] = False
+
+    # ── 2. Definición de filtros ──────────────────────────────────────────────
+    # (key_session, columna_df, valor_todos)
+    _defs_t = [
+        ('tmert_ergo',     'Ergonomo',                  'Todos'),
+        ('tmert_gerencia', 'Gerencia - Cuenta Nacional', 'Todas'),
+        ('tmert_holding',  'Holding',                   'Todos'),
+        ('tmert_emplea',   'Nombre Empleador',           'Todos'),
+        ('tmert_region',   'Región',                    'Todas'),
+    ]
+
+    # ── 3. Funciones de cálculo core ──────────────────────────────────────────
+    def _sin_t(excluir_key):
+        """Filtra _base_t aplicando todos los filtros EXCEPTO el indicado."""
+        dff = _base_t
+        for key, col, all_val in _defs_t:
+            if key == excluir_key:
+                continue
+            val = st.session_state.get(key, all_val)
+            if val != all_val and col in dff.columns:
+                dff = dff[dff[col] == val]
+        return dff
+
+    def _opts_t(key, col):
+        dff = _sin_t(key)
+        if col not in dff.columns:
+            return []
+        return sorted(dff[col].dropna().astype(str).unique().tolist())
+
+    # ── 4. Pase de validación iterativa (Elimina el 'doble click') ─────────────
+    # Garantiza que los valores en session_state sean válidos antes de crear widgets.
+    for _ in range(len(_defs_t)):
+        changed = False
+        for key, col, all_val in _defs_t:
+            val = st.session_state.get(key, all_val)
+            if val == all_val:
+                continue
+            available = _opts_t(key, col)
+            if val not in available:
+                st.session_state[key] = all_val
+                changed = True
+        if not changed:
+            break
+
+    # ── 5. Renderizado de Widgets con key= ────────────────────────────────────
+    # Ergónomo
     filtro_ergo = st.sidebar.selectbox(
-        "Especialista / Ergónomo", ["Todos"] + erg_list
+        "Especialista / Ergónomo",
+        ["Todos"] + _opts_t('tmert_ergo', 'Ergonomo'),
+        key='tmert_ergo'
     )
-    
-    # Restringir listas de filtros según el ergonomo seleccionado para mayor fluidez
-    df_f = df_raw.copy()
-    if filtro_ergo != "Todos":
-        df_f = df_f[df_f['Ergonomo'] == filtro_ergo]
 
+    # Gerencia
     filtro_gerencia = st.sidebar.selectbox(
         "Gerencia - Cuenta Nacional",
-        ["Todas"] + sorted(df_f['Gerencia - Cuenta Nacional'].dropna().unique().tolist())
-    )
-    filtro_holding = st.sidebar.selectbox(
-        "Holding", ["Todos"] + sorted(df_f['Holding'].dropna().unique().tolist())
-    )
-    filtro_empleador = st.sidebar.selectbox(
-        "Nombre Empleador",
-        ["Todos"] + sorted(df_f['Nombre Empleador'].dropna().astype(str).unique().tolist())
-    )
-    filtro_reg = st.sidebar.selectbox(
-        "Región", ["Todas"] + sorted(df_f['Región'].dropna().unique().tolist())
+        ["Todas"] + _opts_t('tmert_gerencia', 'Gerencia - Cuenta Nacional'),
+        key='tmert_gerencia'
     )
 
+    # Holding
+    filtro_holding = st.sidebar.selectbox(
+        "Holding",
+        ["Todos"] + _opts_t('tmert_holding', 'Holding'),
+        key='tmert_holding'
+    )
+
+    # Empleador
+    filtro_empleador = st.sidebar.selectbox(
+        "Nombre Empleador",
+        ["Todos"] + _opts_t('tmert_emplea', 'Nombre Empleador'),
+        key='tmert_emplea'
+    )
+
+    # Región
+    filtro_reg = st.sidebar.selectbox(
+        "Región",
+        ["Todas"] + _opts_t('tmert_region', 'Región'),
+        key='tmert_region'
+    )
+
+    # Mes: El mes es independiente de la base bidireccional porque solo aplica a df_prog
     meses_espanol = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
                      'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
     filtro_mes = st.sidebar.selectbox("Mes (Programación)", ["Todos"] + meses_espanol)
 
+    # ── 6. Resultado Final ────────────────────────────────────────────────────
+    df_f = _base_t.copy()
+    for key, col, all_val in _defs_t:
+        val = st.session_state.get(key, all_val)
+        if val != all_val and col in df_f.columns:
+            df_f = df_f[df_f[col] == val]
+
+    # Contador y Reseteo
+    st.sidebar.markdown("---")
+    st.sidebar.caption(f"🔎 **{len(df_f):,}** registros con los filtros actuales")
+
     if st.sidebar.button("🔄 Resetear Filtros"):
+        st.session_state['_tmert_reset'] = True
         st.rerun()
 
     # ── APLICAR FILTROS ───────────────────────────────────────────────────────
-    df = df_raw.copy()
-    df_seg = df_seg_raw.copy() if not df_seg_raw.empty else pd.DataFrame()
+    # df viene del cross-filtering del sidebar
+    df = df_f.copy()
 
-    if solo_ep:
-        df = df[df['Tiene EP'] == True]
-    if filtro_ergo != "Todos":
-        df = df[df['Ergonomo'] == filtro_ergo]
-        if not df_seg.empty and 'Ergonomo' in df_seg.columns:
+    # Aplicar los mismos filtros sobre df_seg (fuente separada)
+    df_seg = df_seg_raw.copy() if not df_seg_raw.empty else pd.DataFrame()
+    if not df_seg.empty:
+        if filtro_ergo != "Todos" and 'Ergonomo' in df_seg.columns:
             df_seg = df_seg[df_seg['Ergonomo'] == filtro_ergo]
-            
-    if filtro_gerencia != "Todas":
-        df = df[df['Gerencia - Cuenta Nacional'] == filtro_gerencia]
-        if not df_seg.empty and 'Gerencia - Cuenta Nacional' in df_seg.columns:
+        if filtro_gerencia != "Todas" and 'Gerencia - Cuenta Nacional' in df_seg.columns:
             df_seg = df_seg[df_seg['Gerencia - Cuenta Nacional'] == filtro_gerencia]
-            
-    if filtro_holding != "Todos":
-        df = df[df['Holding'] == filtro_holding]
-        if not df_seg.empty and 'Holding' in df_seg.columns:
+        if filtro_holding != "Todos" and 'Holding' in df_seg.columns:
             df_seg = df_seg[df_seg['Holding'] == filtro_holding]
-            
-    if filtro_empleador != "Todos":
-        df = df[df['Nombre Empleador'] == filtro_empleador]
-        if not df_seg.empty and 'Nombre Empleador' in df_seg.columns:
+        if filtro_empleador != "Todos" and 'Nombre Empleador' in df_seg.columns:
             df_seg = df_seg[df_seg['Nombre Empleador'] == filtro_empleador]
-            
-    if filtro_reg != "Todas":
-        df = df[df['Región'] == filtro_reg]
-        if not df_seg.empty and 'Región' in df_seg.columns:
+        if filtro_reg != "Todas" and 'Región' in df_seg.columns:
             df_seg = df_seg[df_seg['Región'] == filtro_reg]
 
     # df_prog: registros con fecha programada (para tab Programación)
