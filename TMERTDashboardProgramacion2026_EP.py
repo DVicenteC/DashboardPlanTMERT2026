@@ -179,7 +179,7 @@ def cargar_datos_seguimiento_tmert():
         for col in cols_fecha:
             df[col] = parsear_fecha_flexible(df[col])
             
-        # Convertir columnas booleanas (Pilar 1, 2, 3, 4, Meta 7.1) a booleanos reales
+        # Convertir columnas booleanas (Pilar 1, 2, 3, 4, Meta 5) a booleanos reales
         cols_bool = [c for c in df.columns if 'Pilar' in c or 'Cumplida' in c or 'Validado' in c]
         bool_map = {
             'TRUE': True, 'FALSE': False, 
@@ -779,11 +779,12 @@ if df_raw is not None:
         if df_seg.empty:
             st.info("ℹ️ Sube un archivo de seguimiento para activar esta vista.")
         else:
-            st.subheader("🎯 Cumplimiento Meta 7.1 (Circular 3900)")
-            
-            # Cálculo de meta real (4 pilares cumplidos)
-            total_plan = len(df_seg)
-            cumplen_meta = df_seg['Meta 7.1 Cumplida'].sum() if 'Meta 7.1 Cumplida' in df_seg.columns else 0
+            st.subheader("🎯 Cumplimiento Meta 5 (4 Pilares + Seguimiento 1)")
+
+            # Universo Plan = total de ATs programadas (mismo que "AT Programadas" en header)
+            # Se usa len(df_prog) para que el denominador coincida con el tab de Programación.
+            total_plan = len(df_prog)
+            cumplen_meta = df_seg['Meta 5 Cumplida'].sum() if 'Meta 5 Cumplida' in df_seg.columns else 0
             avance_meta = (cumplen_meta / total_plan) if total_plan > 0 else 0
             
             # Barra de progreso estilizada
@@ -797,7 +798,7 @@ if df_raw is not None:
             
             c1.metric("Universo Plan", f"{total_plan:,}")
             c2.metric("AT con Registro", f"{real_at:,}", f"{(real_at/total_plan*100):.1f}%")
-            c3.metric("Meta 7.1 Completa", f"{cumplen_meta:,}", "4 Pilares OK")
+            c3.metric("Meta 5 Completa", f"{cumplen_meta:,}", "4 Pilares + Seg. 1")
             c4.metric("Pendientes Atrasadas", f"{atrasadas:,}", delta_color="inverse")
             
             st.divider()
@@ -824,15 +825,15 @@ if df_raw is not None:
                 st.plotly_chart(fig_est, use_container_width=True)
                 
             with col_table:
-                st.markdown("**Resumen Meta 7.1 por Región**")
-                if 'Meta 7.1 Cumplida' in df_seg.columns:
-                    res_reg = df_seg.groupby('Región')['Meta 7.1 Cumplida'].value_counts().unstack(fill_value=0)
+                st.markdown("**Resumen Meta 5 por Región**")
+                if 'Meta 5 Cumplida' in df_seg.columns:
+                    res_reg = df_seg.groupby('Región')['Meta 5 Cumplida'].value_counts().unstack(fill_value=0)
                     st.dataframe(res_reg, use_container_width=True)
                 else:
                     st.write("Data de meta no disponible.")
 
             with st.expander("🔍 Ver Detalle de Seguimiento y Pilares", expanded=False):
-                cols_s = ['Región', 'Nombre Empleador', 'ID-CT', 'Nombre CT', 'Meta 7.1 Cumplida',
+                cols_s = ['Región', 'Nombre Empleador', 'ID-CT', 'Nombre CT', 'Meta 5 Cumplida',
                         'Pilar 1 - Difusión', 'Pilar 2 - Capacitación MK', 'Pilar 3 - Diseño Cap Pract', 'Pilar 4 - Prescripción Caract',
                         'Estado Seguimiento Prescripción Caracterización (sigeco)']
                 cols_s = [c for c in cols_s if c in df_seg.columns]
@@ -853,24 +854,32 @@ if df_raw is not None:
             # Nro. de actividades en GOPIST = Identificaciones Iniciales + Avanzadas (istprod)
             # Nro. de registros en MK = Prescripciones
             
-            ind = df_is.groupby('Ergonomo').agg({
+            agg_dict = {
                 'Fecha real AT': 'count',
                 'Fecha Últ. Identificación Inicial (istprod)': 'count',
                 'Fecha Identificación Avanzada (real)': 'count',
                 'Prescripción Evaluación Inicial (sigeco)': 'count',
                 'Fecha Prescripción Eval Avanzada (sigeco)': 'count',
-                'Estado AT': lambda x: (x == 'Realizada en fecha').sum() + (x == 'Realizada antes de fecha').sum()
-            }).reset_index()
-            
-            ind.columns = ['Ergónomo', 'SIGECO (ATs)', 'GOPIST (Ini)', 'GOPIST (Avz)', 
-                          'MK (Ini)', 'MK (Avz)', 'Meta 7.1 (Cumple)']
-            
+            }
+            if 'Meta 5 Cumplida' in df_is.columns:
+                agg_dict['Meta 5 Cumplida'] = 'sum'
+            ind = df_is.groupby('Ergonomo').agg(agg_dict).reset_index()
+
+            col_names = ['Ergónomo', 'SIGECO (ATs)', 'GOPIST (Ini)', 'GOPIST (Avz)',
+                         'MK (Ini)', 'MK (Avz)']
+            if 'Meta 5 Cumplida' in df_is.columns:
+                col_names.append('Meta 5 (Cumple)')
+            ind.columns = col_names
+
             # Totales
             ind['Total GOPIST'] = ind['GOPIST (Ini)'] + ind['GOPIST (Avz)']
             ind['Total MK'] = ind['MK (Ini)'] + ind['MK (Avz)']
-            
+
             # Reordenar
-            ind = ind[['Ergónomo', 'SIGECO (ATs)', 'Total GOPIST', 'Total MK', 'Meta 7.1 (Cumple)']]
+            keep_cols = ['Ergónomo', 'SIGECO (ATs)', 'Total GOPIST', 'Total MK']
+            if 'Meta 5 (Cumple)' in ind.columns:
+                keep_cols.append('Meta 5 (Cumple)')
+            ind = ind[keep_cols]
             
             # Mostrar Tabla de Ranking
             st.dataframe(ind.sort_values('SIGECO (ATs)', ascending=False), use_container_width=True, hide_index=True)
@@ -879,8 +888,11 @@ if df_raw is not None:
             st.divider()
             col_i1, col_i2 = st.columns(2)
             with col_i1:
-                fig_i1 = px.bar(ind, x='Ergónomo', y=['SIGECO (ATs)', 'Meta 7.1 (Cumple)'], 
-                               barmode='group', title='SIGECO vs Meta 7.1')
+                y_cols_i1 = ['SIGECO (ATs)']
+                if 'Meta 5 (Cumple)' in ind.columns:
+                    y_cols_i1.append('Meta 5 (Cumple)')
+                fig_i1 = px.bar(ind, x='Ergónomo', y=y_cols_i1,
+                               barmode='group', title='SIGECO vs Meta 5')
                 st.plotly_chart(fig_i1, use_container_width=True)
             with col_i2:
                 fig_i2 = px.bar(ind, x='Ergónomo', y=['Total GOPIST', 'Total MK'], 
