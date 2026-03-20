@@ -611,7 +611,7 @@ def mostrar_resumen_detallado(df_filtrado, seccion='tab1'):
     st.download_button(
         label="📥 Descargar Detalle en Excel",
         data=buffer.getvalue(),
-        file_name=f'detalle_tmert_{datetime.now().strftime("%Y%m%d")}.xlsx',
+        file_name=f'detalle_tmert_{datetime.now().strftime("%d-%m-%Y")}.xlsx',
         mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         key=f'download_btn_{seccion}'
     )
@@ -920,7 +920,7 @@ if df_raw is not None:
             st.download_button(
                 label="📥 Descargar Estado de Seguimiento en Excel",
                 data=buffer_seg.getvalue(),
-                file_name=f'estado_seguimiento_tmert_{datetime.now().strftime("%Y%m%d")}.xlsx',
+                file_name=f'estado_seguimiento_tmert_{datetime.now().strftime("%d-%m-%Y")}.xlsx',
                 mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                 key='download_seg'
             )
@@ -1359,7 +1359,7 @@ if df_raw is not None:
         st.download_button(
             label="📥 Descargar Planilla en Excel",
             data=buffer_tab3.getvalue(),
-            file_name=f'planilla_tmert_{datetime.now().strftime("%Y%m%d")}.xlsx',
+            file_name=f'planilla_tmert_{datetime.now().strftime("%d-%m-%Y")}.xlsx',
             mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             key='download_tab3'
         )
