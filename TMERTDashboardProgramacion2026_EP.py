@@ -926,109 +926,62 @@ if df_raw is not None:
 
         if len(df_ep) > 0:
 
-            # NIVEL 1: VISTA GENERAL
+            # Precomputar rankings para el explorador
             rank_seg_gen  = obtener_ranking_limpio(df_ep, 'segmentos', separadores_extra=[" "])
             rank_diag_gen = obtener_ranking_limpio(df_ep, 'diagnosticos')
-            rank_emp_gen  = folios_por_empresa(df_ep)
 
-            col_g1, col_g2 = st.columns(2)
-            with col_g1:
-                if not rank_diag_gen.empty:
-                    fig_diag = px.bar(
-                        rank_diag_gen.head(10), x='Cantidad', y='Nombre', orientation='h',
-                        color_discrete_sequence=['#E67E22'],
-                        title="Top Diagnósticos en Denuncias EP"
-                    )
-                    fig_diag.update_layout(yaxis={'categoryorder': 'total ascending'}, margin=dict(l=0))
-                    st.plotly_chart(fig_diag, use_container_width=True)
-            with col_g2:
-                if not rank_emp_gen.empty:
-                    fig_emp = px.bar(
-                        rank_emp_gen.head(10), x='Folios EP', y='Empresa', orientation='h',
-                        color_discrete_sequence=['#1A936F'],
-                        title="Top Empresas con Denuncias EP (por folios)"
-                    )
-                    fig_emp.update_layout(yaxis={'categoryorder': 'total ascending'}, margin=dict(l=0))
-                    st.plotly_chart(fig_emp, use_container_width=True)
+            # ── Métricas resumen ──────────────────────────────────────────────
+            n_folios_total = contar_folios_distintos(df_ep)
+            n_emp_total    = df_ep['Nombre Empleador'].nunique()
+            n_vis_total    = len(df_ep)
+            ms1, ms2, ms3 = st.columns(3)
+            ms1.metric("Folios EP distintos", f"{n_folios_total:,}")
+            ms2.metric("Empresas con EP", f"{n_emp_total:,}")
+            ms3.metric("Visitas con EP", f"{n_vis_total:,}")
 
             st.divider()
 
-            # ── PARETO EP (Detalle del Ranking) ───────────────────────────────
-            st.subheader("📈 Ranking EP — Análisis de Pareto")
-            st.caption(
-                "Las barras **rojas** son las categorías vitales que acumulan hasta el 80 % de los casos."
-            )
-
-            df_ep_pareto = df_ep.copy()
-            rank_seg_p = obtener_ranking_limpio(df_ep_pareto, 'segmentos', separadores_extra=[" "])
-            opciones_seg_p = ["Todos"] + (ordenar_segmentos(rank_seg_p['Nombre'].tolist())
-                                          if not rank_seg_p.empty else [])
-
-            cf1, cf2 = st.columns([2, 2])
-            with cf1:
-                seg_pareto = st.selectbox(
-                    "Filtrar por Segmento Corporal:",
-                    opciones_seg_p, key="pareto_seg"
-                )
-            with cf2:
-                dimension = st.radio(
-                    "Analizar por:",
-                    ["Ocupaciones (Puestos de Trabajo)", "Tareas"],
-                    horizontal=True, key="pareto_dim"
-                )
-
-            if seg_pareto != "Todos":
-                df_ep_pareto = df_ep_pareto[
-                    df_ep_pareto['segmentos'].str.contains(
-                        seg_pareto, case=False, na=False, regex=False
-                    )
-                ]
-
-            if len(df_ep_pareto) > 0:
-                if "Ocupaciones" in dimension:
-                    col_p, sep_p = 'ocupaciones', ' | '
-                    titulo_p = "Pareto · Puestos de Trabajo con EP"
-                else:
-                    col_p, sep_p = 'tareas', ','
-                    titulo_p = "Pareto · Tareas con EP"
+            # ── Ranking (Detalle del Ranking) en expander ─────────────────────
+            with st.expander("📋 Detalle del Ranking — Puestos de Trabajo / Tareas", expanded=False):
+                df_ep_pareto = df_ep.copy()
+                rank_seg_p = obtener_ranking_limpio(df_ep_pareto, 'segmentos', separadores_extra=[" "])
+                opciones_seg_p = ["Todos"] + (ordenar_segmentos(rank_seg_p['Nombre'].tolist())
+                                              if not rank_seg_p.empty else [])
+                cf1, cf2 = st.columns([2, 2])
+                with cf1:
+                    seg_pareto = st.selectbox("Filtrar por Segmento Corporal:", opciones_seg_p, key="pareto_seg")
+                with cf2:
+                    dimension = st.radio("Analizar por:", ["Ocupaciones (Puestos de Trabajo)", "Tareas"],
+                                         horizontal=True, key="pareto_dim")
                 if seg_pareto != "Todos":
-                    titulo_p += f" — {seg_pareto}"
-
-                fig_p, df_p = grafico_pareto(df_ep_pareto, col_p, titulo_p,
-                                             separador_secundario=sep_p)
-                if fig_p:
-                    st.plotly_chart(fig_p, use_container_width=True)
-
-                    pm1, pm2, pm3 = st.columns(3)
-                    n_vital = int(df_p['Vital'].sum())
-                    n_total = len(df_p)
-                    pct_cat = round(n_vital / n_total * 100, 1) if n_total > 0 else 0
-                    casos_vital = int(df_p[df_p['Vital']]['Cantidad'].sum())
-                    pct_casos = round(casos_vital / df_p['Cantidad'].sum() * 100, 1) if df_p['Cantidad'].sum() > 0 else 0
-                    pm1.metric("Categorías vitales (🔴)", f"{n_vital} de {n_total}")
-                    pm2.metric("% de categorías vitales", f"{pct_cat} %")
-                    pm3.metric("Casos EP que concentran", f"{pct_casos} %")
-
-                    st.markdown("#### 📋 Detalle del Ranking")
-                    df_display = df_p[['Rank', 'Nombre', 'Cantidad', 'Pct', 'PctAcum', 'Vital']].copy()
-                    df_display.columns = ['Rank', 'Nombre', 'Casos EP', '% del Total', '% Acumulado', 'Vital 🔴']
-                    st.dataframe(
-                        df_display,
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={'Vital 🔴': st.column_config.CheckboxColumn("Vital 🔴")}
-                    )
-                else:
-                    st.info("No hay datos suficientes para construir el Pareto.")
-            else:
-                st.info(f"No hay registros EP con segmento «{seg_pareto}» para los filtros actuales.")
+                    df_ep_pareto = df_ep_pareto[
+                        df_ep_pareto['segmentos'].str.contains(seg_pareto, case=False, na=False, regex=False)
+                    ]
+                if len(df_ep_pareto) > 0:
+                    col_p = 'ocupaciones' if "Ocupaciones" in dimension else 'tareas'
+                    sep_p = ' | '          if "Ocupaciones" in dimension else ','
+                    _, df_p = grafico_pareto(df_ep_pareto, col_p,
+                                             "Ranking EP", separador_secundario=sep_p)
+                    if not df_p.empty:
+                        pm1, pm2, pm3 = st.columns(3)
+                        n_vital = int(df_p['Vital'].sum())
+                        n_total_p = len(df_p)
+                        casos_vital = int(df_p[df_p['Vital']]['Cantidad'].sum())
+                        pct_casos = round(casos_vital / df_p['Cantidad'].sum() * 100, 1) if df_p['Cantidad'].sum() > 0 else 0
+                        pm1.metric("Categorías vitales (🔴)", f"{n_vital} de {n_total_p}")
+                        pm2.metric("% de categorías vitales", f"{round(n_vital/n_total_p*100,1)} %" if n_total_p > 0 else "0 %")
+                        pm3.metric("Casos EP que concentran", f"{pct_casos} %")
+                        df_display = df_p[['Rank', 'Nombre', 'Cantidad', 'Pct', 'PctAcum', 'Vital']].copy()
+                        df_display.columns = ['Rank', 'Nombre', 'Casos EP', '% del Total', '% Acumulado', 'Vital 🔴']
+                        st.dataframe(df_display, use_container_width=True, hide_index=True,
+                                     column_config={'Vital 🔴': st.column_config.CheckboxColumn("Vital 🔴")})
 
             st.divider()
 
             # ── EXPLORADOR: De lo General a lo Particular ─────────────────────
-            st.subheader("🔍 Explorador: De lo General a lo Particular")
+            st.subheader("Explorador por Segmento o Diagnóstico")
             st.caption(
-                "Elige un segmento corporal o un diagnóstico para ver en qué empresas, "
+                "Selecciona un segmento corporal o diagnóstico para ver en qué empresas, "
                 "puestos de trabajo y tareas se concentra ese riesgo."
             )
 
@@ -1088,7 +1041,8 @@ if df_raw is not None:
 
                     st.markdown("#### 📋 Ver registros individuales")
                     cols_det = ['Nombre Empleador', 'Nombre CT', 'Región', 'Ergonomo',
-                                'segmentos', 'ocupaciones', 'tareas', 'diagnosticos', 'folios']
+                                'segmentos', 'ocupaciones', 'tareas', 'diagnosticos', 'folios',
+                                'observaciones']
                     cols_det = [c for c in cols_det if c in df_drill.columns]
                     st.dataframe(df_drill[cols_det], use_container_width=True, hide_index=True)
                 else:
