@@ -745,8 +745,9 @@ if df_raw is not None:
         "📊 Programación",
         "🔍 Análisis de Denuncias EP",
         "✅ Estado Seguimiento",
+        "👨‍⚕️ Indicadores por Profesional",
     ])
-    tab1, tab2, tab_seg = tabs
+    tab1, tab2, tab_seg, tab_ind = tabs
 
     # ── TAB 1: PROGRAMACIÓN ───────────────────────────────────────────────────
     with tab1:
@@ -858,8 +859,8 @@ if df_raw is not None:
                 key='download_seg'
             )
 
-    # ── TAB: INDICADORES POR PROFESIONAL (ELIMINADO) ─────────────────────────
-    if False:
+    # ── TAB: INDICADORES POR PROFESIONAL ─────────────────────────────────────
+    with tab_ind:
         if df_seg.empty:
             st.info("ℹ️ Se requiere data de seguimiento para calcular indicadores por profesional.")
         else:
