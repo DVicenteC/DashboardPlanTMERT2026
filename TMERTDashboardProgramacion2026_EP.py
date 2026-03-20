@@ -774,9 +774,18 @@ if df_raw is not None:
 
     # ── TÍTULO ────────────────────────────────────────────────────────────────
     st.title("🏥 Dashboard TMERT 2026 - Gestión Integral")
+    # Fecha de corte real: estampada por el procesador en columna _FechaCorte
+    _fecha_corte = ""
+    if df_seg_raw is not None and "_FechaCorte" in df_seg_raw.columns:
+        _fc = df_seg_raw["_FechaCorte"].iloc[0]
+        try:
+            _fecha_corte = pd.to_datetime(_fc).strftime("%d/%m/%Y")
+        except Exception:
+            _fecha_corte = str(_fc)
     st.markdown(
         f"**IST · Especialidades Técnicas** | "
-        f"Datos actualizados: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+        f"Datos al: **{_fecha_corte}**" if _fecha_corte else
+        "**IST · Especialidades Técnicas**"
     )
 
     # ── MÉTRICAS GLOBALES ─────────────────────────────────────────────────────
