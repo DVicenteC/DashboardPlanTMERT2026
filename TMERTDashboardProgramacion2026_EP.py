@@ -174,8 +174,9 @@ def cargar_datos_seguimiento_tmert():
             
         df.columns = df.columns.str.strip()
         
-        # Parsear fechas (Día Primero)
-        cols_fecha = [c for c in df.columns if 'Fecha' in c or 'Prescripción' in c]
+        # Parsear fechas (Día Primero) - Excluyendo columnas que son booleanas o de estado
+        cols_fecha = [c for c in df.columns if ('Fecha' in c or 'Prescripción' in c) 
+                      and 'Pilar' not in c and 'Estado' not in c]
         for col in cols_fecha:
             df[col] = parsear_fecha_flexible(df[col])
             
@@ -186,7 +187,7 @@ def cargar_datos_seguimiento_tmert():
             '1': True, '0': False,
             'VERDADERO': True, 'FALSO': False,
             'VERDADERO ': True, 'FALSO ': False,
-            'NAN': False, 'NONE': False
+            'NAN': False, 'NONE': False, 'NAT': False
         }
         for col in cols_bool:
             # Asegurar limpieza y mapeo robusto
@@ -742,13 +743,10 @@ if df_raw is not None:
     # ── TABS ──────────────────────────────────────────────────────────────────
     tabs = st.tabs([
         "📊 Programación",
-        "✅ Estado Seguimiento",
-        "👨‍⚕️ Indicadores por Profesional",
         "🔍 Análisis de Denuncias EP",
-        "📈 Pareto EP",
-        "📋 Planilla Detallada"
+        "✅ Estado Seguimiento",
     ])
-    tab1, tab_seg, tab_ind, tab2, tab3, tab4 = tabs
+    tab1, tab2, tab_seg = tabs
 
     # ── TAB 1: PROGRAMACIÓN ───────────────────────────────────────────────────
     with tab1:
@@ -781,66 +779,87 @@ if df_raw is not None:
         else:
             st.subheader("🎯 Cumplimiento Meta 5 (4 Pilares + Seguimiento 1)")
 
-            # Universo Plan = total de ATs programadas (mismo que "AT Programadas" en header)
-            # Se usa len(df_prog) para que el denominador coincida con el tab de Programación.
             total_plan = len(df_prog)
             cumplen_meta = df_seg['Meta 5 Cumplida'].sum() if 'Meta 5 Cumplida' in df_seg.columns else 0
             avance_meta = (cumplen_meta / total_plan) if total_plan > 0 else 0
-            
-            # Barra de progreso estilizada
+
             st.progress(avance_meta, text=f"Progreso hacia Meta Anual: {avance_meta*100:.1f}% ({cumplen_meta}/{total_plan} CTs)")
-            
+
             # Métricas de avance
             c1, c2, c3, c4 = st.columns(4)
-            real_at = df_seg['Fecha real AT'].notna().sum()
-            antes = (df_seg['Estado AT'] == 'Realizada antes de fecha').sum()
-            atrasadas = (df_seg['Estado AT'] == 'Pendiente atrasada').sum()
-            
+            real_at = df_seg['Fecha real AT'].notna().sum() if 'Fecha real AT' in df_seg.columns else 0
+            atrasadas = (df_seg['Estado AT'] == 'Pendiente atrasada').sum() if 'Estado AT' in df_seg.columns else 0
+
             c1.metric("Universo Plan", f"{total_plan:,}")
-            c2.metric("AT con Registro", f"{real_at:,}", f"{(real_at/total_plan*100):.1f}%")
+            c2.metric("AT con Registro", f"{real_at:,}", f"{(real_at/total_plan*100):.1f}%" if total_plan > 0 else "0%")
             c3.metric("Meta 5 Completa", f"{cumplen_meta:,}", "4 Pilares + Seg. 1")
             c4.metric("Pendientes Atrasadas", f"{atrasadas:,}", delta_color="inverse")
-            
+
             st.divider()
-            
-            # Detalle por Pilares
+
+            # Desglose por Pilares
             st.markdown("#### 🧱 Desglose por Pilares de Cumplimiento")
             cp1, cp2, cp3, cp4 = st.columns(4)
-            for col, label, p_col in zip([cp1, cp2, cp3, cp4], 
-                                        ["P1: Difusión", "P2: Cap + MK", "P3: Diseño Cap", "P4: Prescripción"],
-                                        ["Pilar 1 - Difusión", "Pilar 2 - Capacitación MK", "Pilar 3 - Diseño Cap Pract", "Pilar 4 - Prescripción Caract"]):
+            for col_m, label, p_col in zip(
+                [cp1, cp2, cp3, cp4],
+                ["P1: Difusión", "P2: Capacitación", "P3: Diseño Cap", "P4: Prescripción Caract"],
+                ["Pilar 1 - Difusión", "Pilar 2 - Capacitación", "Pilar 3 - Diseño Cap Pract", "Pilar 4 - Prescripción Caract"]
+            ):
                 if p_col in df_seg.columns:
                     val = df_seg[p_col].sum()
-                    col.metric(label, f"{val:,}", f"{(val/total_plan*100):.0f}%")
+                    col_m.metric(label, f"{val:,}", f"{(val/total_plan*100):.0f}%" if total_plan > 0 else "0%")
 
             st.divider()
-            
-            col_chart, col_table = st.columns([1, 2])
-            with col_chart:
-                # Gráfico de torta de estados
-                estados = df_seg['Estado AT'].value_counts().reset_index()
-                fig_est = px.pie(estados, names='Estado AT', values='count', 
-                                title='Distribución por Estado SUSESO',
-                                color_discrete_sequence=px.colors.qualitative.Pastel)
-                st.plotly_chart(fig_est, use_container_width=True)
-                
-            with col_table:
-                st.markdown("**Resumen Meta 5 por Región**")
-                if 'Meta 5 Cumplida' in df_seg.columns:
-                    res_reg = df_seg.groupby('Región')['Meta 5 Cumplida'].value_counts().unstack(fill_value=0)
-                    st.dataframe(res_reg, use_container_width=True)
-                else:
-                    st.write("Data de meta no disponible.")
 
-            with st.expander("🔍 Ver Detalle de Seguimiento y Pilares", expanded=False):
-                cols_s = ['Región', 'Nombre Empleador', 'ID-CT', 'Nombre CT', 'Meta 5 Cumplida',
-                        'Pilar 1 - Difusión', 'Pilar 2 - Capacitación MK', 'Pilar 3 - Diseño Cap Pract', 'Pilar 4 - Prescripción Caract',
-                        'Estado Seguimiento Prescripción Caracterización (sigeco)']
-                cols_s = [c for c in cols_s if c in df_seg.columns]
-                st.dataframe(df_seg[cols_s], use_container_width=True, hide_index=True)
+            # Resumen Meta 5 por Región
+            st.markdown("**Resumen Meta 5 por Región**")
+            if 'Meta 5 Cumplida' in df_seg.columns and 'Región' in df_seg.columns:
+                res_reg = df_seg.groupby('Región')['Meta 5 Cumplida'].value_counts().unstack(fill_value=0)
+                st.dataframe(res_reg, use_container_width=True)
 
-    # ── TAB: INDICADORES POR PROFESIONAL ─────────────────────────────────────
-    with tab_ind:
+            st.divider()
+
+            # Tabla detallada con estado de avance por CT
+            st.markdown("#### 📋 Detalle de Avance por Centro de Trabajo")
+            col_h = 'N° de trabajadores(as) a evaluar 2026 N° hombres'
+            col_m = 'N° de trabajadores(as) a evaluar 2026 N° mujeres'
+
+            cols_s = [
+                'Región', 'Ergonomo', 'Nombre Empleador', 'ID-CT', 'Nombre CT',
+                'Estado AT',
+                'Meta 5 Cumplida',
+                'Pilar 1 - Difusión',
+                'Pilar 2 - Capacitación',
+                'Pilar 3 - Diseño Cap Pract',
+                'Pilar 4 - Prescripción Caract',
+                'Estado Seguimiento Prescripción Caracterización (sigeco)',
+                'Fecha AT Difusión (real)',
+                'Fecha AT Capacitación (real)',
+                'Fecha Prescripción Caracterización (real)',
+                'Fecha Diseño Cap Práctica (real)',
+            ]
+            cols_s = [c for c in cols_s if c in df_seg.columns]
+
+            df_det = df_seg[cols_s].copy()
+            for c in df_det.columns:
+                if 'Fecha' in c:
+                    df_det[c] = pd.to_datetime(df_det[c], errors='coerce').dt.strftime('%d-%m-%Y').fillna('')
+
+            st.dataframe(df_det, use_container_width=True, hide_index=True)
+
+            buffer_seg = io.BytesIO()
+            with pd.ExcelWriter(buffer_seg, engine='openpyxl') as writer:
+                df_det.to_excel(writer, index=False, sheet_name='Estado_Seguimiento')
+            st.download_button(
+                label="📥 Descargar Estado de Seguimiento en Excel",
+                data=buffer_seg.getvalue(),
+                file_name=f'estado_seguimiento_tmert_{datetime.now().strftime("%Y%m%d")}.xlsx',
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                key='download_seg'
+            )
+
+    # ── TAB: INDICADORES POR PROFESIONAL (ELIMINADO) ─────────────────────────
+    if False:
         if df_seg.empty:
             st.info("ℹ️ Se requiere data de seguimiento para calcular indicadores por profesional.")
         else:
@@ -901,13 +920,12 @@ if df_raw is not None:
 
     # ── TAB 2: ANÁLISIS DE DENUNCIAS EP ───────────────────────────────────────
     with tab2:
-        st.header("Análisis de Salud Laboral (Ranking de EP)")
+        st.header("🔍 Análisis de Denuncias EP")
         df_ep = df[df['Tiene EP']]
 
         if len(df_ep) > 0:
 
             # NIVEL 1: VISTA GENERAL
-            # separadores_extra=[" "] para explotar "HOMBRO_DER CODO_DER" en valores atómicos
             rank_seg_gen  = obtener_ranking_limpio(df_ep, 'segmentos', separadores_extra=[" "])
             rank_diag_gen = obtener_ranking_limpio(df_ep, 'diagnosticos')
             rank_emp_gen  = folios_por_empresa(df_ep)
@@ -934,10 +952,82 @@ if df_raw is not None:
 
             st.divider()
 
-            # NIVEL 2 & 3: EXPLORADOR
+            # ── PARETO EP (Detalle del Ranking) ───────────────────────────────
+            st.subheader("📈 Ranking EP — Análisis de Pareto")
+            st.caption(
+                "Las barras **rojas** son las categorías vitales que acumulan hasta el 80 % de los casos."
+            )
+
+            df_ep_pareto = df_ep.copy()
+            rank_seg_p = obtener_ranking_limpio(df_ep_pareto, 'segmentos', separadores_extra=[" "])
+            opciones_seg_p = ["Todos"] + (ordenar_segmentos(rank_seg_p['Nombre'].tolist())
+                                          if not rank_seg_p.empty else [])
+
+            cf1, cf2 = st.columns([2, 2])
+            with cf1:
+                seg_pareto = st.selectbox(
+                    "Filtrar por Segmento Corporal:",
+                    opciones_seg_p, key="pareto_seg"
+                )
+            with cf2:
+                dimension = st.radio(
+                    "Analizar por:",
+                    ["Ocupaciones (Puestos de Trabajo)", "Tareas"],
+                    horizontal=True, key="pareto_dim"
+                )
+
+            if seg_pareto != "Todos":
+                df_ep_pareto = df_ep_pareto[
+                    df_ep_pareto['segmentos'].str.contains(
+                        seg_pareto, case=False, na=False, regex=False
+                    )
+                ]
+
+            if len(df_ep_pareto) > 0:
+                if "Ocupaciones" in dimension:
+                    col_p, sep_p = 'ocupaciones', ' | '
+                    titulo_p = "Pareto · Puestos de Trabajo con EP"
+                else:
+                    col_p, sep_p = 'tareas', ','
+                    titulo_p = "Pareto · Tareas con EP"
+                if seg_pareto != "Todos":
+                    titulo_p += f" — {seg_pareto}"
+
+                fig_p, df_p = grafico_pareto(df_ep_pareto, col_p, titulo_p,
+                                             separador_secundario=sep_p)
+                if fig_p:
+                    st.plotly_chart(fig_p, use_container_width=True)
+
+                    pm1, pm2, pm3 = st.columns(3)
+                    n_vital = int(df_p['Vital'].sum())
+                    n_total = len(df_p)
+                    pct_cat = round(n_vital / n_total * 100, 1) if n_total > 0 else 0
+                    casos_vital = int(df_p[df_p['Vital']]['Cantidad'].sum())
+                    pct_casos = round(casos_vital / df_p['Cantidad'].sum() * 100, 1) if df_p['Cantidad'].sum() > 0 else 0
+                    pm1.metric("Categorías vitales (🔴)", f"{n_vital} de {n_total}")
+                    pm2.metric("% de categorías vitales", f"{pct_cat} %")
+                    pm3.metric("Casos EP que concentran", f"{pct_casos} %")
+
+                    st.markdown("#### 📋 Detalle del Ranking")
+                    df_display = df_p[['Rank', 'Nombre', 'Cantidad', 'Pct', 'PctAcum', 'Vital']].copy()
+                    df_display.columns = ['Rank', 'Nombre', 'Casos EP', '% del Total', '% Acumulado', 'Vital 🔴']
+                    st.dataframe(
+                        df_display,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={'Vital 🔴': st.column_config.CheckboxColumn("Vital 🔴")}
+                    )
+                else:
+                    st.info("No hay datos suficientes para construir el Pareto.")
+            else:
+                st.info(f"No hay registros EP con segmento «{seg_pareto}» para los filtros actuales.")
+
+            st.divider()
+
+            # ── EXPLORADOR: De lo General a lo Particular ─────────────────────
             st.subheader("🔍 Explorador: De lo General a lo Particular")
             st.caption(
-                "Elige un segmento Corporal o un diagnóstico para ver en qué empresas, "
+                "Elige un segmento corporal o un diagnóstico para ver en qué empresas, "
                 "puestos de trabajo y tareas se concentra ese riesgo."
             )
 
@@ -949,7 +1039,6 @@ if df_raw is not None:
             rank_base   = rank_seg_gen if modo == "Segmento Corporal" else rank_diag_gen
 
             if not rank_base.empty:
-                # Orden anatómico para segmentos; alfabético para diagnósticos
                 if modo == "Segmento Corporal":
                     _opts = ["Todos"] + ordenar_segmentos(rank_base['Nombre'].tolist())
                 else:
@@ -960,12 +1049,9 @@ if df_raw is not None:
                     key="explorador_selector"
                 )
 
-                if seleccion == "Todos":
-                    df_drill = df_ep.copy()
-                else:
-                    df_drill = df_ep[
-                        df_ep[col_explor].str.contains(seleccion, case=False, na=False, regex=False)
-                    ]
+                df_drill = df_ep.copy() if seleccion == "Todos" else df_ep[
+                    df_ep[col_explor].str.contains(seleccion, case=False, na=False, regex=False)
+                ]
 
                 if len(df_drill) > 0:
                     n_folios_drill = contar_folios_distintos(df_drill)
@@ -979,8 +1065,7 @@ if df_raw is not None:
                     col_d1, col_d2, col_d3 = st.columns(3)
                     with col_d1:
                         st.markdown("**🏢 Empresas**")
-                        r_emp = folios_por_empresa(df_drill)
-                        st.dataframe(r_emp, use_container_width=True, hide_index=True)
+                        st.dataframe(folios_por_empresa(df_drill), use_container_width=True, hide_index=True)
                     with col_d2:
                         st.markdown("**💼 Puestos de Trabajo**")
                         r_ocup = obtener_ranking_limpio(
@@ -1000,11 +1085,11 @@ if df_raw is not None:
                         else:
                             st.info("Sin datos de tareas.")
 
-                    with st.expander("📋 Ver registros individuales"):
-                        cols_det = ['Nombre Empleador', 'Nombre CT', 'Región', 'Ergonomo',
-                                    'segmentos', 'ocupaciones', 'tareas', 'diagnosticos', 'folios']
-                        cols_det = [c for c in cols_det if c in df_drill.columns]
-                        st.dataframe(df_drill[cols_det], use_container_width=True, hide_index=True)
+                    st.markdown("#### 📋 Ver registros individuales")
+                    cols_det = ['Nombre Empleador', 'Nombre CT', 'Región', 'Ergonomo',
+                                'segmentos', 'ocupaciones', 'tareas', 'diagnosticos', 'folios']
+                    cols_det = [c for c in cols_det if c in df_drill.columns]
+                    st.dataframe(df_drill[cols_det], use_container_width=True, hide_index=True)
                 else:
                     st.info(f"No hay registros con «{seleccion}» para los filtros actuales.")
             else:
@@ -1013,8 +1098,8 @@ if df_raw is not None:
         else:
             st.warning("⚠️ No se encontraron registros con Denuncias de EP en el filtro actual.")
 
-    # ── TAB 3: PARETO EP ──────────────────────────────────────────────────────
-    with tab3:
+    # ── TAB PARETO EP (integrado en tab2) ────────────────────────────────────
+    if False:
         st.header("📈 Análisis de Pareto — Intervención Preventiva")
         st.caption(
             "Identifica los puestos de trabajo y tareas que concentran el mayor número "
@@ -1177,8 +1262,8 @@ if df_raw is not None:
         else:
             st.warning("⚠️ No se encontraron registros con Denuncias de EP en el filtro actual.")
 
-    # ── TAB 4: PLANILLA DETALLADA ─────────────────────────────────────────────
-    with tab4:
+    # ── TAB PLANILLA DETALLADA (ELIMINADO) ───────────────────────────────────
+    if False:
         st.subheader("Planificación Detallada 2026")
         col_fecha_display = 'Fecha Asistencia Técnica TMERT 2026*'
         cols_finales = [col_fecha_display, 'Región', 'Ergonomo', 'Nombre Empleador',
