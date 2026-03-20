@@ -435,49 +435,106 @@ def grafico_pareto(df_ep, columna, titulo, separador_secundario=","):
 
     ranking = ranking.head(30).copy()
     total = ranking['Cantidad'].sum()
-    ranking['Pct']      = (ranking['Cantidad'] / total * 100).round(1)
-    ranking['PctAcum']  = ranking['Pct'].cumsum().round(1)
-    ranking['Rank']     = range(1, len(ranking) + 1)
-    ranking['Vital']    = ranking['PctAcum'] <= 80.0
+    ranking['Pct']     = (ranking['Cantidad'] / total * 100).round(1)
+    ranking['PctAcum'] = ranking['Pct'].cumsum().round(1)
+    ranking['Rank']    = range(1, len(ranking) + 1)
+    ranking['Vital']   = ranking['PctAcum'] <= 80.0
 
-    colores = ['#E74C3C' if v else '#85C1E9' for v in ranking['Vital']]
+    # Colores: vital = coral IST-friendly, resto = gris azulado
+    colores = ['#C0392B' if v else '#AEC6CF' for v in ranking['Vital']]
+    # Etiqueta en barra: mostrar valor solo si hay espacio (top 15)
+    textos = [str(int(v)) if i < 15 else '' for i, v in enumerate(ranking['Cantidad'])]
 
     fig = go.Figure()
 
     # Barras
     fig.add_trace(go.Bar(
-        x=ranking['Nombre'], y=ranking['Cantidad'],
-        name='Casos EP', marker_color=colores, yaxis='y1'
+        x=ranking['Nombre'],
+        y=ranking['Cantidad'],
+        name='Casos EP',
+        marker=dict(color=colores, line=dict(width=0)),
+        text=textos,
+        textposition='outside',
+        textfont=dict(size=10, color='#333333'),
+        yaxis='y1',
+        hovertemplate='<b>%{x}</b><br>Casos EP: %{y}<extra></extra>',
     ))
 
-    # Línea acumulada
+    # Línea acumulada suavizada
     fig.add_trace(go.Scatter(
-        x=ranking['Nombre'], y=ranking['PctAcum'],
-        name='% Acumulado', mode='lines+markers',
-        line=dict(color='#2E86AB', width=2),
-        marker=dict(size=5), yaxis='y2'
+        x=ranking['Nombre'],
+        y=ranking['PctAcum'],
+        name='% Acumulado',
+        mode='lines+markers',
+        line=dict(color='#2C3E50', width=2.5, shape='spline'),
+        marker=dict(size=6, color='#2C3E50', symbol='circle'),
+        yaxis='y2',
+        hovertemplate='%{y:.1f} %<extra>% Acumulado</extra>',
     ))
+
+    # Área sombreada bajo la curva (zona vital)
+    idx_corte = int(ranking['Vital'].sum()) - 1
+    if idx_corte >= 0:
+        x_vital = ranking['Nombre'].iloc[:idx_corte + 1].tolist()
+        y_vital = ranking['PctAcum'].iloc[:idx_corte + 1].tolist()
+        fig.add_trace(go.Scatter(
+            x=x_vital + x_vital[::-1],
+            y=y_vital + [0] * len(y_vital),
+            fill='toself',
+            fillcolor='rgba(192,57,43,0.08)',
+            line=dict(width=0),
+            showlegend=False,
+            yaxis='y2',
+            hoverinfo='skip',
+        ))
 
     # Línea de corte 80 %
     fig.add_shape(
         type='line', xref='paper', yref='y2',
         x0=0, x1=1, y0=80, y1=80,
-        line=dict(color='orange', width=2, dash='dash')
+        line=dict(color='#E67E22', width=1.5, dash='dot')
     )
     fig.add_annotation(
         xref='paper', yref='y2', x=1.01, y=80,
-        text='80 %', showarrow=False,
-        xanchor='left', font=dict(color='orange', size=11)
+        text='<b>80 %</b>', showarrow=False,
+        xanchor='left', font=dict(color='#E67E22', size=11)
     )
 
     fig.update_layout(
-        title=titulo,
-        xaxis=dict(tickangle=-40),
-        yaxis=dict(title='Casos EP', side='left'),
-        yaxis2=dict(title='% Acumulado', side='right', overlaying='y',
-                    range=[0, 112], showgrid=False),
-        legend=dict(orientation='h', yanchor='bottom', y=1.02, x=0),
-        height=500, margin=dict(r=60)
+        title=dict(text=titulo, font=dict(size=15, color='#2C3E50'), x=0),
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        xaxis=dict(
+            tickangle=-38,
+            tickfont=dict(size=10, color='#555'),
+            showgrid=False,
+            linecolor='#DDDDDD',
+        ),
+        yaxis=dict(
+            title='Casos EP',
+            title_font=dict(size=11, color='#C0392B'),
+            tickfont=dict(size=10),
+            showgrid=True,
+            gridcolor='#F0F0F0',
+            side='left',
+        ),
+        yaxis2=dict(
+            title='% Acumulado',
+            title_font=dict(size=11, color='#2C3E50'),
+            tickfont=dict(size=10),
+            side='right',
+            overlaying='y',
+            range=[0, 115],
+            showgrid=False,
+            ticksuffix=' %',
+        ),
+        legend=dict(
+            orientation='h', yanchor='bottom', y=1.02, x=0,
+            font=dict(size=11),
+        ),
+        height=520,
+        margin=dict(l=50, r=70, t=60, b=120),
+        bargap=0.25,
     )
     return fig, ranking
 
@@ -995,7 +1052,7 @@ if df_raw is not None:
                 _, df_p = grafico_pareto(df_ep_pareto, col_p, "Ranking EP",
                                          separador_secundario=sep_p)
 
-                if not df_p.empty:
+                if fig_p and not df_p.empty:
                     # Métricas de concentración
                     pm1, pm2, pm3 = st.columns(3)
                     n_vital   = int(df_p['Vital'].sum())
@@ -1006,22 +1063,7 @@ if df_raw is not None:
                     pm2.metric("% de categorías vitales", f"{round(n_vital/n_total_p*100,1)} %" if n_total_p > 0 else "0 %")
                     pm3.metric("Casos EP que concentran", f"{pct_casos} %")
 
-                    # Treemap — reemplaza el gráfico de barras + línea acumulada
-                    df_tm = df_p.copy()
-                    df_tm['Grupo'] = df_tm['Vital'].map({True: '🔴 Vital (≤80%)', False: '🔵 Resto'})
-                    fig_tm = px.treemap(
-                        df_tm,
-                        path=['Grupo', 'Nombre'],
-                        values='Cantidad',
-                        color='Vital',
-                        color_discrete_map={True: '#E74C3C', False: '#85C1E9'},
-                        title=f"Treemap · {'Puestos de Trabajo' if 'Ocupaciones' in dimension else 'Tareas'} con EP"
-                              + (f" — {seg_pareto}" if seg_pareto != "Todos" else ""),
-                        hover_data={'Pct': ':.1f', 'PctAcum': ':.1f'},
-                    )
-                    fig_tm.update_traces(textinfo="label+value+percent root")
-                    fig_tm.update_layout(height=500, margin=dict(t=50, l=10, r=10, b=10))
-                    st.plotly_chart(fig_tm, use_container_width=True)
+                    st.plotly_chart(fig_p, use_container_width=True)
 
                     # Tabla detallada del ranking
                     st.markdown("#### 📋 Detalle del Ranking")
