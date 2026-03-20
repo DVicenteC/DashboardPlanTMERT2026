@@ -1049,7 +1049,7 @@ if df_raw is not None:
             if len(df_ep_pareto) > 0:
                 col_p = 'ocupaciones' if "Ocupaciones" in dimension else 'tareas'
                 sep_p = ' | '          if "Ocupaciones" in dimension else ','
-                _, df_p = grafico_pareto(df_ep_pareto, col_p, "Ranking EP",
+                fig_p, df_p = grafico_pareto(df_ep_pareto, col_p, "Ranking EP",
                                          separador_secundario=sep_p)
 
                 if fig_p and not df_p.empty:
