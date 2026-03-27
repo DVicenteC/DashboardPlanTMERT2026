@@ -983,11 +983,29 @@ if df_raw is not None:
                     return 'color: #c62828; font-weight: bold'
                 return ''
 
+            st.info(
+                "**% Inicio**: porcentaje de CTs donde se completó al menos un pilar (P1, P2, P3 o P4). "
+                "Indica cuántos CTs del profesional ya tienen alguna actividad registrada.  \n"
+                "**Eficiencia**: de los CTs que ya iniciaron, qué porcentaje llegó a Meta 5 completa. "
+                "Un valor bajo significa que muchos CTs empezaron pero no han completado los 4 pilares + Seguimiento 1."
+            )
+
             cols_tabla1 = ['Ergónomo', 'CTs Asignados', 'Con alguna AT', '% Inicio',
                            'Meta 5', '% Meta 5', 'vs. Promedio (pp)', 'Eficiencia']
             ind_display = ind[[c for c in cols_tabla1 if c in ind.columns]].sort_values('% Meta 5', ascending=False)
+
+            # Formatear columnas de porcentaje a 1 decimal
+            for _col in ['% Inicio', '% Meta 5', 'vs. Promedio (pp)', 'Eficiencia']:
+                if _col in ind_display.columns:
+                    ind_display[_col] = ind_display[_col].round(1)
+
             st.dataframe(
-                ind_display.style.applymap(_color_delta, subset=['vs. Promedio (pp)']),
+                ind_display.style.applymap(_color_delta, subset=['vs. Promedio (pp)']).format({
+                    '% Inicio': '{:.1f}%',
+                    '% Meta 5': '{:.1f}%',
+                    'vs. Promedio (pp)': '{:+.1f}',
+                    'Eficiencia': '{:.1f}%',
+                }),
                 use_container_width=True, hide_index=True
             )
 
