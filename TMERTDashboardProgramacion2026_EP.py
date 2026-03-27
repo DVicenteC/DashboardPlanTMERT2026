@@ -793,8 +793,17 @@ if df_raw is not None:
     with m1:
         st.metric("AT Programadas", f"{len(df_prog):,}")
     with m2:
-        if not df_seg.empty and 'Fecha real AT' in df_seg.columns:
-            realizadas = df_seg['Fecha real AT'].notna().sum()
+        if not df_seg.empty:
+            _cols_pilares = [c for c in [
+                'Pilar 1 - Difusión', 'Pilar 2 - Capacitación',
+                'Pilar 3 - Diseño Cap Pract', 'Pilar 4 - Prescripción Caract'
+            ] if c in df_seg.columns]
+            if _cols_pilares:
+                realizadas = df_seg[_cols_pilares].any(axis=1).sum()
+            elif 'Fecha real AT' in df_seg.columns:
+                realizadas = df_seg['Fecha real AT'].notna().sum()
+            else:
+                realizadas = 0
             porc = (realizadas / len(df_prog) * 100) if len(df_prog) > 0 else 0
             st.metric("AT Realizadas", f"{realizadas:,}", f"{porc:.1f}% del programa")
         else:
