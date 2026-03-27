@@ -932,60 +932,124 @@ if df_raw is not None:
         if df_seg.empty:
             st.info("ℹ️ Se requiere data de seguimiento para calcular indicadores por profesional.")
         else:
-            st.subheader("👨‍⚕️ Indicadores de Gestión Mensual")
-            
-            # Agrupar por Profesional (Ergónomo)
-            df_is = df_seg.copy()
-            
-            # Definir columnas de métricas
-            # Nro. de actividades en SIGECO = Fecha real AT
-            # Nro. de actividades en GOPIST = Identificaciones Iniciales + Avanzadas (istprod)
-            # Nro. de registros en MK = Prescripciones
-            
-            agg_dict = {
-                'Fecha real AT': 'count',
-                'Fecha Últ. Identificación Inicial (istprod)': 'count',
-                'Fecha Identificación Avanzada (real)': 'count',
-                'Prescripción Evaluación Inicial (sigeco)': 'count',
-                'Fecha Prescripción Eval Avanzada (sigeco)': 'count',
-            }
-            if 'Meta 5 Cumplida' in df_is.columns:
-                agg_dict['Meta 5 Cumplida'] = 'sum'
-            ind = df_is.groupby('Ergonomo').agg(agg_dict).reset_index()
+            st.subheader("👨‍⚕️ Indicadores por Profesional — Avance TMERT 2026")
 
-            col_names = ['Ergónomo', 'SIGECO (ATs)', 'GOPIST (Ini)', 'GOPIST (Avz)',
-                         'MK (Ini)', 'MK (Avz)']
-            if 'Meta 5 Cumplida' in df_is.columns:
-                col_names.append('Meta 5 (Cumple)')
-            ind.columns = col_names
+            COLS_PILAR = [
+                'Pilar 1 - Difusión', 'Pilar 2 - Capacitación',
+                'Pilar 3 - Diseño Cap Pract', 'Pilar 4 - Prescripción Caract'
+            ]
 
-            # Totales
-            ind['Total GOPIST'] = ind['GOPIST (Ini)'] + ind['GOPIST (Avz)']
-            ind['Total MK'] = ind['MK (Ini)'] + ind['MK (Avz)']
+            def _build_ind(df_src):
+                """Construye tabla de indicadores agrupada por ergónomo."""
+                cols_p = [c for c in COLS_PILAR if c in df_src.columns]
+                grp = df_src.groupby('Ergonomo')
+                ind = pd.DataFrame()
+                ind['CTs Asignados'] = grp['Ergonomo'].count()
+                if cols_p:
+                    ind['Con alguna AT'] = grp.apply(
+                        lambda g: g[cols_p].any(axis=1).sum()
+                    )
+                else:
+                    ind['Con alguna AT'] = 0
+                if 'Meta 5 Cumplida' in df_src.columns:
+                    ind['Meta 5'] = grp['Meta 5 Cumplida'].sum()
+                else:
+                    ind['Meta 5'] = 0
+                ind = ind.reset_index().rename(columns={'Ergonomo': 'Ergónomo'})
+                ind['% Inicio'] = (ind['Con alguna AT'] / ind['CTs Asignados'] * 100).round(1)
+                ind['% Meta 5'] = (ind['Meta 5'] / ind['CTs Asignados'] * 100).round(1)
+                ind['Eficiencia'] = (
+                    ind['Meta 5'] / ind['Con alguna AT'].replace(0, float('nan')) * 100
+                ).round(1).fillna(0)
+                return ind
 
-            # Reordenar
-            keep_cols = ['Ergónomo', 'SIGECO (ATs)', 'Total GOPIST', 'Total MK']
-            if 'Meta 5 (Cumple)' in ind.columns:
-                keep_cols.append('Meta 5 (Cumple)')
-            ind = ind[keep_cols]
-            
-            # Mostrar Tabla de Ranking
-            st.dataframe(ind.sort_values('SIGECO (ATs)', ascending=False), use_container_width=True, hide_index=True)
-            
-            # Gráficos Comparativos
+            # Tabla del equipo completo (para calcular promedio sin importar filtros)
+            ind_todos = _build_ind(df_seg_raw) if not df_seg_raw.empty else pd.DataFrame()
+            prom_meta5 = ind_todos['% Meta 5'].mean() if not ind_todos.empty else 0
+
+            # Tabla filtrada (puede ser un profesional o todos)
+            ind = _build_ind(df_seg)
+            ind['vs. Promedio (pp)'] = (ind['% Meta 5'] - prom_meta5).round(1)
+
+            # ── NIVEL 1: Tabla resumen ─────────────────────────────────────
+            st.markdown("#### 📋 Resumen por Profesional")
+            st.caption(f"Promedio del equipo: **{prom_meta5:.1f}%** Meta 5 | "
+                       f"columna 'vs. Promedio' = diferencia en puntos porcentuales")
+
+            def _color_delta(val):
+                if val > 0:
+                    return 'color: #2e7d32; font-weight: bold'
+                elif val < 0:
+                    return 'color: #c62828; font-weight: bold'
+                return ''
+
+            cols_tabla1 = ['Ergónomo', 'CTs Asignados', 'Con alguna AT', '% Inicio',
+                           'Meta 5', '% Meta 5', 'vs. Promedio (pp)', 'Eficiencia']
+            ind_display = ind[[c for c in cols_tabla1 if c in ind.columns]].sort_values('% Meta 5', ascending=False)
+            st.dataframe(
+                ind_display.style.applymap(_color_delta, subset=['vs. Promedio (pp)']),
+                use_container_width=True, hide_index=True
+            )
+
             st.divider()
-            col_i1, col_i2 = st.columns(2)
-            with col_i1:
-                y_cols_i1 = ['SIGECO (ATs)']
-                if 'Meta 5 (Cumple)' in ind.columns:
-                    y_cols_i1.append('Meta 5 (Cumple)')
-                fig_i1 = px.bar(ind, x='Ergónomo', y=y_cols_i1,
-                               barmode='group', title='SIGECO vs Meta 5')
-                st.plotly_chart(fig_i1, use_container_width=True)
-            with col_i2:
-                fig_i2 = px.bar(ind, x='Ergónomo', y=['Total GOPIST', 'Total MK'], 
-                               barmode='group', title='GOPIST vs MK')
-                st.plotly_chart(fig_i2, use_container_width=True)
+
+            # ── NIVEL 3: Ranking horizontal % Meta 5 vs. promedio equipo ──
+            st.markdown("#### 📊 Ritmo relativo al equipo — % Meta 5")
+            ind_sorted = ind.sort_values('% Meta 5', ascending=True)
+            fig_rank = px.bar(
+                ind_sorted, y='Ergónomo', x='% Meta 5',
+                orientation='h',
+                color='vs. Promedio (pp)',
+                color_continuous_scale=[[0, '#c62828'], [0.5, '#e0e0e0'], [1, '#2e7d32']],
+                color_continuous_midpoint=0,
+                text='% Meta 5',
+                labels={'% Meta 5': '% Meta 5 Cumplida'},
+            )
+            fig_rank.add_vline(x=prom_meta5, line_dash='dash', line_color='#4F0B7B',
+                               annotation_text=f'Promedio {prom_meta5:.1f}%',
+                               annotation_position='top right')
+            fig_rank.update_traces(texttemplate='%{text}%', textposition='outside')
+            fig_rank.update_layout(coloraxis_showscale=False, margin=dict(l=10, r=40))
+            st.plotly_chart(fig_rank, use_container_width=True)
+
+            st.divider()
+
+            # ── NIVEL 2: Desglose por pilar ────────────────────────────────
+            st.markdown("#### 🧱 Avance por Pilar")
+            cols_p = [c for c in COLS_PILAR if c in df_seg.columns]
+            if cols_p:
+                pilar_data = []
+                for ergo, grp in df_seg.groupby('Ergonomo'):
+                    total = len(grp)
+                    for col in cols_p:
+                        n = int(grp[col].sum()) if col in grp.columns else 0
+                        pilar_data.append({
+                            'Ergónomo': ergo,
+                            'Pilar': col.replace('Pilar ', 'P').replace(' - ', ': ').replace(' Cap Pract', ' Cap').replace(' Caract', ''),
+                            'CTs': n,
+                            '%': round(n / total * 100, 1) if total > 0 else 0.0
+                        })
+                df_pilar = pd.DataFrame(pilar_data)
+
+                # Tabla pilar con N (X%)
+                df_pilar_tabla = df_pilar.copy()
+                df_pilar_tabla['N (%)'] = df_pilar_tabla.apply(
+                    lambda r: f"{int(r['CTs'])} ({r['%']}%)", axis=1)
+                tabla_pilar = df_pilar_tabla.pivot(index='Ergónomo', columns='Pilar', values='N (%)').reset_index()
+                st.dataframe(tabla_pilar, use_container_width=True, hide_index=True)
+
+                # Gráfico barras por pilar
+                fig_pil = px.bar(
+                    df_pilar, x='Pilar', y='%', color='Ergónomo',
+                    barmode='group', text='%',
+                    labels={'%': '% CTs con pilar cumplido'},
+                    color_discrete_sequence=px.colors.qualitative.Set2,
+                )
+                fig_pil.update_traces(texttemplate='%{text}%', textposition='outside')
+                fig_pil.update_layout(legend_title_text='Profesional')
+                st.plotly_chart(fig_pil, use_container_width=True)
+            else:
+                st.info("No hay columnas de pilares disponibles en los datos.")
 
     # ── TAB 2: ANÁLISIS DE DENUNCIAS EP ───────────────────────────────────────
     with tab2:
