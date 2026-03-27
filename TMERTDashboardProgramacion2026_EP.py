@@ -797,21 +797,12 @@ if df_raw is not None:
     with m1:
         st.metric("AT Programadas", f"{len(df_prog):,}")
     with m2:
-        if not df_seg.empty:
-            _cols_pilares = [c for c in [
-                'Pilar 1 - Difusión', 'Pilar 2 - Capacitación',
-                'Pilar 3 - Diseño Cap Pract', 'Pilar 4 - Prescripción Caract'
-            ] if c in df_seg.columns]
-            if _cols_pilares:
-                realizadas = df_seg[_cols_pilares].any(axis=1).sum()
-            elif 'Fecha real AT' in df_seg.columns:
-                realizadas = df_seg['Fecha real AT'].notna().sum()
-            else:
-                realizadas = 0
-            porc = (realizadas / len(df_prog) * 100) if len(df_prog) > 0 else 0
-            st.metric("AT Realizadas", f"{realizadas:,}", f"{porc:.1f}% del programa")
+        if not df_seg.empty and 'Meta 5 Cumplida' in df_seg.columns:
+            _meta5 = df_seg['Meta 5 Cumplida'].sum()
+            _porc5 = (_meta5 / len(df_prog) * 100) if len(df_prog) > 0 else 0
+            st.metric("Meta 5 Completa", f"{_meta5:,}", f"{_porc5:.1f}% del plan")
         else:
-            st.metric("AT Realizadas", "S/D")
+            st.metric("Meta 5 Completa", "S/D")
     with m3:
         n_ep = contar_folios_distintos(df)
         n_emp_ep = df[df['Tiene EP']]['Nombre Empleador'].nunique() if n_ep > 0 else 0
@@ -866,14 +857,12 @@ if df_raw is not None:
             st.progress(avance_meta, text=f"Progreso hacia Meta Anual: {avance_meta*100:.1f}% ({cumplen_meta}/{total_plan} CTs)")
 
             # Métricas de avance
-            c1, c2, c3, c4 = st.columns(4)
-            real_at = df_seg['Fecha real AT'].notna().sum() if 'Fecha real AT' in df_seg.columns else 0
+            c1, c2, c3 = st.columns(3)
             atrasadas = (df_seg['Estado AT'] == 'Pendiente atrasada').sum() if 'Estado AT' in df_seg.columns else 0
 
             c1.metric("Universo Plan", f"{total_plan:,}")
-            c2.metric("AT con Registro", f"{real_at:,}", f"{(real_at/total_plan*100):.1f}%" if total_plan > 0 else "0%")
-            c3.metric("Meta 5 Completa", f"{cumplen_meta:,}", "4 Pilares + Seg. 1")
-            c4.metric("Pendientes Atrasadas", f"{atrasadas:,}", delta_color="inverse")
+            c2.metric("Meta 5 Completa", f"{cumplen_meta:,}", "4 Pilares + Seg. 1")
+            c3.metric("Pendientes Atrasadas", f"{atrasadas:,}", delta_color="inverse")
 
             st.divider()
 
