@@ -148,13 +148,17 @@ def parsear_fecha_flexible(serie):
     - M/D/YYYY o MM/DD/YYYY (formato Google Sheets export)
     - YYYY-MM-DD (formato ISO)
     """
-    resultado = pd.to_datetime(serie, format='%d-%m-%Y', errors='coerce')
+    # ISO primero (lo que sube el procesador a GSheets)
+    resultado = pd.to_datetime(serie, format='%Y-%m-%d', errors='coerce')
     mascara = resultado.isna() & serie.notna() & (serie.astype(str).str.strip() != '')
     if mascara.any():
-        resultado[mascara] = pd.to_datetime(serie[mascara], format='%m/%d/%Y', errors='coerce')
-    mascara2 = resultado.isna() & serie.notna() & (serie.astype(str).str.strip() != '')
-    if mascara2.any():
-        resultado[mascara2] = pd.to_datetime(serie[mascara2], dayfirst=True, errors='coerce')
+        resultado[mascara] = pd.to_datetime(serie[mascara], format='%d-%m-%Y', errors='coerce')
+    mascara = resultado.isna() & serie.notna() & (serie.astype(str).str.strip() != '')
+    if mascara.any():
+        resultado[mascara] = pd.to_datetime(serie[mascara], format='%d/%m/%Y', errors='coerce')
+    mascara = resultado.isna() & serie.notna() & (serie.astype(str).str.strip() != '')
+    if mascara.any():
+        resultado[mascara] = pd.to_datetime(serie[mascara], dayfirst=True, errors='coerce')
     return resultado
 
 # ── 4. CARGA DE DATOS ─────────────────────────────────────────────────────────
