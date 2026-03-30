@@ -14,3 +14,4 @@ build/
 
 # Streamlit secrets (NUNCA subir al repo)
 .streamlit/secrets.toml
+.gs
