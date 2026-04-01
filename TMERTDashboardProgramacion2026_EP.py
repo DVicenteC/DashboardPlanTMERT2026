@@ -1000,7 +1000,7 @@ if df_raw is not None:
                     ind_display[_col] = ind_display[_col].round(1)
 
             st.dataframe(
-                ind_display.style.applymap(_color_delta, subset=['vs. Promedio (pp)']).format({
+                ind_display.style.map(_color_delta, subset=['vs. Promedio (pp)']).format({
                     '% Inicio': '{:.1f}%',
                     '% Meta 5': '{:.1f}%',
                     'vs. Promedio (pp)': '{:+.1f}',
