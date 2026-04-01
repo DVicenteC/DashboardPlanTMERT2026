@@ -902,6 +902,7 @@ if df_raw is not None:
                 'Pilar 3 - Diseño Cap Pract',
                 'Pilar 4 - Prescripción Caract',
                 'Estado Seguimiento Prescripción Caracterización (sigeco)',
+                'Último Profesional Registra (sigeco)',
                 'Fecha AT Difusión (real)',
                 'Fecha AT Capacitación (real)',
                 'Fecha Prescripción Caracterización (real)',
