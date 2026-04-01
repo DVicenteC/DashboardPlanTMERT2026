@@ -894,7 +894,7 @@ if df_raw is not None:
             col_m = 'N° de trabajadores(as) a evaluar 2026 N° mujeres'
 
             cols_s = [
-                'Región', 'Ergonomo', 'Nombre Empleador', 'ID-CT', 'Nombre CT',
+                'Región', 'Ergonomo', 'Nombre Empleador', 'ID-CT', 'Nombre CT', 'Dirección CT', 'Comuna CT',
                 'Estado AT',
                 'Meta 5 Cumplida',
                 'Pilar 1 - Difusión',
