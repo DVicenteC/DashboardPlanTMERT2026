@@ -966,10 +966,6 @@ if df_raw is not None:
                     ind['Meta 5'] = grp['Meta 5 Cumplida'].sum()
                 else:
                     ind['Meta 5'] = 0
-                if 'Fecha real AT' in _df_plan.columns:
-                    ind['Con AT real'] = grp['Fecha real AT'].apply(lambda s: s.notna().sum())
-                else:
-                    ind['Con AT real'] = 0
                 ind = ind.reset_index().rename(columns={'Ergonomo': 'Ergónomo'})
                 ind['% Inicio'] = (ind['Con alguna AT'] / ind['CTs Asignados'] * 100).round(1)
                 ind['% Meta 5'] = (ind['Meta 5'] / ind['CTs Asignados'] * 100).round(1)
@@ -995,7 +991,7 @@ if df_raw is not None:
                 24
             )
             ind['Esperado'] = (ind['CTs Asignados'] * _months_elapsed / 24).round(1)
-            ind['vs. Pace'] = (ind.get('Con AT real', 0) - ind['Esperado']).round(1)
+            ind['vs. Pace'] = (ind['Con alguna AT'] - ind['Esperado']).round(1)
 
             # ── NIVEL 1: Tabla resumen ─────────────────────────────────────
             st.markdown("#### 📋 Resumen por Profesional")
@@ -1022,9 +1018,10 @@ if df_raw is not None:
 
             cols_tabla1 = [
                 'Ergónomo', 'CTs Asignados',
-                'Con AT real', 'Esperado', 'vs. Pace',
-                'Con alguna AT', '% Inicio',
-                'Meta 5', '% Meta 5', 'vs. Promedio (pp)', 'Eficiencia',
+                'Meta 5', '% Meta 5',
+                'Con alguna AT', '% Inicio', 'Eficiencia',
+                'Esperado', 'vs. Pace',
+                'vs. Promedio (pp)',
             ]
             ind_display = ind[[c for c in cols_tabla1 if c in ind.columns]].sort_values('% Meta 5', ascending=False)
 
@@ -1112,12 +1109,20 @@ if df_raw is not None:
                     marker=dict(size=6),
                 ))
 
-                # Línea vertical en el mes actual
+                # Línea vertical en el mes actual (add_shape evita el bug de Plotly
+                # con ejes categóricos que falla al usar add_vline + annotation)
                 _hoy_str = _hoy_calc.strftime('%b %Y')
                 if _hoy_str in _df_chart['Mes_str'].values:
-                    _fig_pace.add_vline(
-                        x=_hoy_str, line_dash='dot', line_color='gray',
-                        annotation_text='Hoy', annotation_position='top right'
+                    _fig_pace.add_shape(
+                        type='line', xref='x', yref='paper',
+                        x0=_hoy_str, x1=_hoy_str, y0=0, y1=1,
+                        line=dict(color='gray', width=1.5, dash='dot')
+                    )
+                    _fig_pace.add_annotation(
+                        x=_hoy_str, y=1, xref='x', yref='paper',
+                        text='Hoy', showarrow=False,
+                        xanchor='left', yanchor='bottom',
+                        font=dict(color='gray', size=11)
                     )
 
                 _fig_pace.update_layout(
