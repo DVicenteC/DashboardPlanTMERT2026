@@ -974,23 +974,35 @@ if df_raw is not None:
                 ).round(1).fillna(0)
                 return ind
 
-            # Base para Tab 4: siempre con filtros del sidebar pero SIN filtro EP.
-            # Así los totales no dependen del toggle y podemos mostrar ambas vistas.
+            # IDs con denuncia EP: vienen de df_raw (plan base, siempre tiene folios).
+            # Calculados antes de armar _df_ind_total para poder aplicarlos si solo_ep=True.
+            _ep_ct_ids = set()
+            if 'ID-CT' in df_raw.columns and 'Tiene EP' in df_raw.columns:
+                _ep_ct_ids = set(
+                    df_raw[df_raw['Tiene EP'] == True]['ID-CT'].astype(str).str.upper()
+                )
+
+            # Base para Tab 4: filtros del sidebar + filtro EP cuando el toggle está activo.
             _df_ind_total = df_seg_raw.copy() if not df_seg_raw.empty else pd.DataFrame()
             if not _df_ind_total.empty:
                 for _k, _col_f, _all_v in _defs_t:
                     _v = st.session_state.get(_k, _all_v)
                     if _v != _all_v and _col_f in _df_ind_total.columns:
                         _df_ind_total = _df_ind_total[_df_ind_total[_col_f] == _v]
+                # Aplicar filtro EP si toggle activo
+                if solo_ep and _ep_ct_ids and 'ID-CT' in _df_ind_total.columns:
+                    _df_ind_total = _df_ind_total[
+                        _df_ind_total['ID-CT'].astype(str).str.upper().isin(_ep_ct_ids)
+                    ].copy()
 
-            # Foco EP: subset de _df_ind_total con denuncias de EP
-            _df_ind_ep = (
-                _df_ind_total[
-                    _df_ind_total['folios'].astype(str).str.strip().ne('')
+            # Foco EP como subconjunto (solo relevante cuando solo_ep=False; cuando es True
+            # _df_ind_total ya está filtrado y _df_ind_ep queda vacío para no duplicar columnas)
+            if not solo_ep and _ep_ct_ids and not _df_ind_total.empty and 'ID-CT' in _df_ind_total.columns:
+                _df_ind_ep = _df_ind_total[
+                    _df_ind_total['ID-CT'].astype(str).str.upper().isin(_ep_ct_ids)
                 ].copy()
-                if not _df_ind_total.empty and 'folios' in _df_ind_total.columns
-                else pd.DataFrame()
-            )
+            else:
+                _df_ind_ep = pd.DataFrame()
 
             # Promedio del equipo sobre el total (sin filtro EP)
             ind_todos  = _build_ind(df_seg_raw) if not df_seg_raw.empty else pd.DataFrame()
