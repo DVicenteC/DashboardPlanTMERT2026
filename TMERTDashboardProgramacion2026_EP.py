@@ -184,8 +184,8 @@ def cargar_datos_seguimiento_tmert():
         for col in cols_fecha:
             df[col] = parsear_fecha_flexible(df[col])
             
-        # Convertir columnas booleanas (Pilar 1, 2, 3, 4, Meta 5) a booleanos reales
-        cols_bool = [c for c in df.columns if 'Pilar' in c or 'Cumplida' in c or 'Validado' in c]
+        # Convertir columnas booleanas (Pilar 1-4, Meta 5, Validado MK, Es_Programado)
+        cols_bool = [c for c in df.columns if 'Pilar' in c or 'Cumplida' in c or 'Validado' in c or 'Programado' in c]
         bool_map = {
             'TRUE': True, 'FALSE': False, 
             '1': True, '0': False,
@@ -758,6 +758,9 @@ if df_raw is not None:
 
     # Aplicar los mismos filtros sobre df_seg (fuente separada)
     df_seg = df_seg_raw.copy() if not df_seg_raw.empty else pd.DataFrame()
+    # Filtro EP: cuando solo_ep está activo, limitar seguimiento a CTs con denuncias
+    if solo_ep and not df_seg.empty and 'folios' in df_seg.columns:
+        df_seg = df_seg[df_seg['folios'].astype(str).str.strip().ne('')]
     if not df_seg.empty:
         if filtro_ergo != "Todos" and 'Ergonomo' in df_seg.columns:
             df_seg = df_seg[df_seg['Ergonomo'] == filtro_ergo]
@@ -942,8 +945,15 @@ if df_raw is not None:
 
             def _build_ind(df_src):
                 """Construye tabla de indicadores agrupada por ergónomo."""
-                cols_p = [c for c in COLS_PILAR if c in df_src.columns]
-                grp = df_src.groupby('Ergonomo')
+                # Denominadores (CTs Asignados, Meta 5) usan solo los programados
+                # para no inflar con actividades fuera del plan.
+                _df_plan = (
+                    df_src[df_src['Es_Programado'] == True].copy()
+                    if 'Es_Programado' in df_src.columns
+                    else df_src.copy()
+                )
+                cols_p = [c for c in COLS_PILAR if c in _df_plan.columns]
+                grp = _df_plan.groupby('Ergonomo')
                 ind = pd.DataFrame()
                 ind['CTs Asignados'] = grp['Ergonomo'].count()
                 if cols_p:
@@ -952,10 +962,14 @@ if df_raw is not None:
                     )
                 else:
                     ind['Con alguna AT'] = 0
-                if 'Meta 5 Cumplida' in df_src.columns:
+                if 'Meta 5 Cumplida' in _df_plan.columns:
                     ind['Meta 5'] = grp['Meta 5 Cumplida'].sum()
                 else:
                     ind['Meta 5'] = 0
+                if 'Fecha real AT' in _df_plan.columns:
+                    ind['Con AT real'] = grp['Fecha real AT'].apply(lambda s: s.notna().sum())
+                else:
+                    ind['Con AT real'] = 0
                 ind = ind.reset_index().rename(columns={'Ergonomo': 'Ergónomo'})
                 ind['% Inicio'] = (ind['Con alguna AT'] / ind['CTs Asignados'] * 100).round(1)
                 ind['% Meta 5'] = (ind['Meta 5'] / ind['CTs Asignados'] * 100).round(1)
@@ -972,10 +986,24 @@ if df_raw is not None:
             ind = _build_ind(df_seg)
             ind['vs. Promedio (pp)'] = (ind['% Meta 5'] - prom_meta5).round(1)
 
+            # Pace: distribuir el total de CTs en 24 meses (Ene 2025 – Dic 2026)
+            _inicio_plan   = pd.Timestamp('2025-01-01')
+            _hoy_calc      = pd.Timestamp.today().normalize()
+            _months_elapsed = min(
+                max((_hoy_calc.year - _inicio_plan.year) * 12
+                    + (_hoy_calc.month - _inicio_plan.month) + 1, 1),
+                24
+            )
+            ind['Esperado'] = (ind['CTs Asignados'] * _months_elapsed / 24).round(1)
+            ind['vs. Pace'] = (ind.get('Con AT real', 0) - ind['Esperado']).round(1)
+
             # ── NIVEL 1: Tabla resumen ─────────────────────────────────────
             st.markdown("#### 📋 Resumen por Profesional")
-            st.caption(f"Promedio del equipo: **{prom_meta5:.1f}%** Meta 5 | "
-                       f"columna 'vs. Promedio' = diferencia en puntos porcentuales")
+            st.caption(
+                f"Promedio del equipo: **{prom_meta5:.1f}%** Meta 5 | "
+                f"Pace = distribución lineal de CTs en 24 meses (Ene 2025–Dic 2026), "
+                f"mes actual = **{_months_elapsed}** de 24"
+            )
 
             def _color_delta(val):
                 if val > 0:
@@ -985,27 +1013,34 @@ if df_raw is not None:
                 return ''
 
             st.info(
-                "**% Inicio**: porcentaje de CTs donde se completó al menos un pilar (P1, P2, P3 o P4). "
-                "Indica cuántos CTs del profesional ya tienen alguna actividad registrada.  \n"
-                "**Eficiencia**: de los CTs que ya iniciaron, qué porcentaje llegó a Meta 5 completa. "
-                "Un valor bajo significa que muchos CTs empezaron pero no han completado los 4 pilares + Seguimiento 1."
+                "**Con AT real**: CTs programados donde ya ocurrió al menos una AT en 2025 o 2026.  \n"
+                "**Esperado**: CTs que debería tener listos a este mes según pace lineal.  \n"
+                "**vs. Pace**: diferencia entre realizados y esperados (positivo = adelantado).  \n"
+                "**% Inicio**: CTs con al menos un pilar completado.  \n"
+                "**Eficiencia**: de los que iniciaron, cuántos llegaron a Meta 5."
             )
 
-            cols_tabla1 = ['Ergónomo', 'CTs Asignados', 'Con alguna AT', '% Inicio',
-                           'Meta 5', '% Meta 5', 'vs. Promedio (pp)', 'Eficiencia']
+            cols_tabla1 = [
+                'Ergónomo', 'CTs Asignados',
+                'Con AT real', 'Esperado', 'vs. Pace',
+                'Con alguna AT', '% Inicio',
+                'Meta 5', '% Meta 5', 'vs. Promedio (pp)', 'Eficiencia',
+            ]
             ind_display = ind[[c for c in cols_tabla1 if c in ind.columns]].sort_values('% Meta 5', ascending=False)
 
-            # Formatear columnas de porcentaje a 1 decimal
             for _col in ['% Inicio', '% Meta 5', 'vs. Promedio (pp)', 'Eficiencia']:
                 if _col in ind_display.columns:
                     ind_display[_col] = ind_display[_col].round(1)
 
+            _style_cols_pace = [c for c in ['vs. Pace', 'vs. Promedio (pp)'] if c in ind_display.columns]
             st.dataframe(
-                ind_display.style.map(_color_delta, subset=['vs. Promedio (pp)']).format({
-                    '% Inicio': '{:.1f}%',
-                    '% Meta 5': '{:.1f}%',
+                ind_display.style.map(_color_delta, subset=_style_cols_pace).format({
+                    '% Inicio':        '{:.1f}%',
+                    '% Meta 5':        '{:.1f}%',
                     'vs. Promedio (pp)': '{:+.1f}',
-                    'Eficiencia': '{:.1f}%',
+                    'Eficiencia':      '{:.1f}%',
+                    'Esperado':        '{:.1f}',
+                    'vs. Pace':        '{:+.1f}',
                 }),
                 use_container_width=True, hide_index=True
             )
@@ -1030,6 +1065,87 @@ if df_raw is not None:
             fig_rank.update_traces(texttemplate='%{text}%', textposition='outside')
             fig_rank.update_layout(coloraxis_showscale=False, margin=dict(l=10, r=40))
             st.plotly_chart(fig_rank, use_container_width=True)
+
+            st.divider()
+
+            # ── RITMO ACUMULADO: realizado vs pace esperado ────────────────
+            st.markdown("#### 📈 Ritmo Acumulado — Realizado vs. Pace Esperado (2025–2026)")
+            st.caption(
+                "La línea punteada muestra el ritmo ideal distribuyendo los CTs en 24 meses. "
+                "La línea sólida es el acumulado real de CTs con al menos una AT registrada."
+            )
+
+            _df_pace = df_seg.copy()
+            _n_pace = int((_df_pace['Es_Programado'] == True).sum()) if 'Es_Programado' in _df_pace.columns else len(_df_pace)
+
+            if _n_pace > 0 and 'Fecha real AT' in _df_pace.columns:
+                _meses = pd.date_range(start='2025-01-01', end='2026-12-01', freq='MS')
+                _pace_mensual = _n_pace / 24
+
+                _fechas_real = pd.to_datetime(_df_pace['Fecha real AT'], errors='coerce').dropna()
+                _fechas_real = _fechas_real[
+                    (_fechas_real >= '2025-01-01') & (_fechas_real <= '2026-12-31')
+                ]
+
+                _acum_real = []
+                for _m in _meses:
+                    _fin = _m + pd.offsets.MonthEnd(0)
+                    _acum_real.append(int((_fechas_real <= _fin).sum()))
+
+                _df_chart = pd.DataFrame({
+                    'Mes':      _meses,
+                    'Esperado': [(i + 1) * _pace_mensual for i in range(24)],
+                    'Realizado': _acum_real,
+                })
+                _df_chart['Mes_str'] = _df_chart['Mes'].dt.strftime('%b %Y')
+
+                _fig_pace = go.Figure()
+                _fig_pace.add_trace(go.Scatter(
+                    x=_df_chart['Mes_str'], y=_df_chart['Esperado'],
+                    name='Pace esperado', mode='lines',
+                    line=dict(color='#E41395', width=2, dash='dash'),
+                ))
+                _fig_pace.add_trace(go.Scatter(
+                    x=_df_chart['Mes_str'], y=_df_chart['Realizado'],
+                    name='Acumulado real', mode='lines+markers',
+                    line=dict(color='#4F0B7B', width=2.5),
+                    marker=dict(size=6),
+                ))
+
+                # Línea vertical en el mes actual
+                _hoy_str = _hoy_calc.strftime('%b %Y')
+                if _hoy_str in _df_chart['Mes_str'].values:
+                    _fig_pace.add_vline(
+                        x=_hoy_str, line_dash='dot', line_color='gray',
+                        annotation_text='Hoy', annotation_position='top right'
+                    )
+
+                _fig_pace.update_layout(
+                    xaxis_title='Mes', yaxis_title='CTs acumulados',
+                    plot_bgcolor='white', paper_bgcolor='white',
+                    legend=dict(orientation='h', yanchor='bottom', y=1.02),
+                    height=420, xaxis=dict(tickangle=-45),
+                    margin=dict(l=10, r=20, t=30, b=80),
+                )
+                st.plotly_chart(_fig_pace, use_container_width=True)
+
+                # Métricas de pace al mes actual
+                _idx_hoy = next(
+                    (i for i, m in enumerate(_meses)
+                     if m.year == _hoy_calc.year and m.month == _hoy_calc.month),
+                    None
+                )
+                if _idx_hoy is not None:
+                    _esp_hoy = _df_chart['Esperado'].iloc[_idx_hoy]
+                    _real_hoy = _df_chart['Realizado'].iloc[_idx_hoy]
+                    _delta = int(_real_hoy - _esp_hoy)
+                    _pp1, _pp2, _pp3 = st.columns(3)
+                    _pp1.metric("CTs con AT a la fecha", f"{int(_real_hoy):,}")
+                    _pp2.metric("Pace esperado a la fecha", f"{int(_esp_hoy):,}")
+                    _pp3.metric("Diferencia vs. pace", f"{_delta:+,}",
+                                delta_color="normal" if _delta >= 0 else "inverse")
+            else:
+                st.info("No hay datos de AT real para calcular el ritmo acumulado.")
 
             st.divider()
 
