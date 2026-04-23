@@ -974,17 +974,35 @@ if df_raw is not None:
                 ).round(1).fillna(0)
                 return ind
 
-            # Tabla del equipo completo (para calcular promedio sin importar filtros)
-            ind_todos = _build_ind(df_seg_raw) if not df_seg_raw.empty else pd.DataFrame()
+            # Base para Tab 4: siempre con filtros del sidebar pero SIN filtro EP.
+            # Así los totales no dependen del toggle y podemos mostrar ambas vistas.
+            _df_ind_total = df_seg_raw.copy() if not df_seg_raw.empty else pd.DataFrame()
+            if not _df_ind_total.empty:
+                for _k, _col_f, _all_v in _defs_t:
+                    _v = st.session_state.get(_k, _all_v)
+                    if _v != _all_v and _col_f in _df_ind_total.columns:
+                        _df_ind_total = _df_ind_total[_df_ind_total[_col_f] == _v]
+
+            # Foco EP: subset de _df_ind_total con denuncias de EP
+            _df_ind_ep = (
+                _df_ind_total[
+                    _df_ind_total['folios'].astype(str).str.strip().ne('')
+                ].copy()
+                if not _df_ind_total.empty and 'folios' in _df_ind_total.columns
+                else pd.DataFrame()
+            )
+
+            # Promedio del equipo sobre el total (sin filtro EP)
+            ind_todos  = _build_ind(df_seg_raw) if not df_seg_raw.empty else pd.DataFrame()
             prom_meta5 = ind_todos['% Meta 5'].mean() if not ind_todos.empty else 0
 
-            # Tabla filtrada (puede ser un profesional o todos)
-            ind = _build_ind(df_seg)
+            # Tabla total (sidebar filtered, sin EP)
+            ind = _build_ind(_df_ind_total)
             ind['vs. Promedio (pp)'] = (ind['% Meta 5'] - prom_meta5).round(1)
 
             # Pace: distribuir el total de CTs en 24 meses (Ene 2025 – Dic 2026)
-            _inicio_plan   = pd.Timestamp('2025-01-01')
-            _hoy_calc      = pd.Timestamp.today().normalize()
+            _inicio_plan    = pd.Timestamp('2025-01-01')
+            _hoy_calc       = pd.Timestamp.today().normalize()
             _months_elapsed = min(
                 max((_hoy_calc.year - _inicio_plan.year) * 12
                     + (_hoy_calc.month - _inicio_plan.month) + 1, 1),
@@ -993,11 +1011,29 @@ if df_raw is not None:
             ind['Esperado'] = (ind['CTs Asignados'] * _months_elapsed / 24).round(1)
             ind['vs. Pace'] = (ind['Con alguna AT'] - ind['Esperado']).round(1)
 
+            # Columnas EP: agregar foco EP al mismo DataFrame
+            if not _df_ind_ep.empty:
+                _ind_ep = _build_ind(_df_ind_ep)
+                _ep_sub = _ind_ep[
+                    ['Ergónomo'] + [c for c in ['CTs Asignados', 'Meta 5', 'Con alguna AT'] if c in _ind_ep.columns]
+                ].rename(columns={
+                    'CTs Asignados': 'CTs EP',
+                    'Meta 5':        'Meta5 EP',
+                    'Con alguna AT': 'Con AT EP',
+                })
+                _ep_sub['% Meta5 EP'] = (
+                    _ep_sub['Meta5 EP'] / _ep_sub['CTs EP'].replace(0, float('nan')) * 100
+                ).round(1).fillna(0)
+                ind = ind.merge(_ep_sub, on='Ergónomo', how='left')
+                for _ec in ['CTs EP', 'Meta5 EP', 'Con AT EP', '% Meta5 EP']:
+                    if _ec in ind.columns:
+                        ind[_ec] = ind[_ec].fillna(0)
+
             # ── NIVEL 1: Tabla resumen ─────────────────────────────────────
             st.markdown("#### 📋 Resumen por Profesional")
             st.caption(
                 f"Promedio del equipo: **{prom_meta5:.1f}%** Meta 5 | "
-                f"Pace = distribución lineal de CTs en 24 meses (Ene 2025–Dic 2026), "
+                f"Pace = distribución lineal en 24 meses (Ene 2025–Dic 2026), "
                 f"mes actual = **{_months_elapsed}** de 24"
             )
 
@@ -1009,36 +1045,36 @@ if df_raw is not None:
                 return ''
 
             st.info(
-                "**Con AT real**: CTs programados donde ya ocurrió al menos una AT en 2025 o 2026.  \n"
-                "**Esperado**: CTs que debería tener listos a este mes según pace lineal.  \n"
-                "**vs. Pace**: diferencia entre realizados y esperados (positivo = adelantado).  \n"
-                "**% Inicio**: CTs con al menos un pilar completado.  \n"
+                "**Columnas TOTAL**: sobre todos los CTs asignados del profesional.  \n"
+                "**Columnas EP**: solo sobre CTs con denuncias de EP.  \n"
+                "**Esperado**: CTs que debería tener con AT según pace lineal.  \n"
+                "**vs. Pace**: realizados menos esperados (positivo = adelantado).  \n"
                 "**Eficiencia**: de los que iniciaron, cuántos llegaron a Meta 5."
             )
 
+            _tiene_ep_cols = 'CTs EP' in ind.columns
             cols_tabla1 = [
-                'Ergónomo', 'CTs Asignados',
-                'Meta 5', '% Meta 5',
-                'Con alguna AT', '% Inicio', 'Eficiencia',
-                'Esperado', 'vs. Pace',
-                'vs. Promedio (pp)',
+                'Ergónomo',
+                'CTs Asignados', 'Meta 5', '% Meta 5', 'Con alguna AT', '% Inicio', 'Eficiencia',
             ]
+            if _tiene_ep_cols:
+                cols_tabla1 += ['CTs EP', 'Meta5 EP', '% Meta5 EP', 'Con AT EP']
+            cols_tabla1 += ['Esperado', 'vs. Pace', 'vs. Promedio (pp)']
+
             ind_display = ind[[c for c in cols_tabla1 if c in ind.columns]].sort_values('% Meta 5', ascending=False)
 
-            for _col in ['% Inicio', '% Meta 5', 'vs. Promedio (pp)', 'Eficiencia']:
-                if _col in ind_display.columns:
-                    ind_display[_col] = ind_display[_col].round(1)
-
-            _style_cols_pace = [c for c in ['vs. Pace', 'vs. Promedio (pp)'] if c in ind_display.columns]
+            _fmt = {
+                '% Inicio':          '{:.1f}%',
+                '% Meta 5':          '{:.1f}%',
+                '% Meta5 EP':        '{:.1f}%',
+                'vs. Promedio (pp)': '{:+.1f}',
+                'Eficiencia':        '{:.1f}%',
+                'Esperado':          '{:.1f}',
+                'vs. Pace':          '{:+.1f}',
+            }
+            _style_cols = [c for c in ['vs. Pace', 'vs. Promedio (pp)'] if c in ind_display.columns]
             st.dataframe(
-                ind_display.style.map(_color_delta, subset=_style_cols_pace).format({
-                    '% Inicio':        '{:.1f}%',
-                    '% Meta 5':        '{:.1f}%',
-                    'vs. Promedio (pp)': '{:+.1f}',
-                    'Eficiencia':      '{:.1f}%',
-                    'Esperado':        '{:.1f}',
-                    'vs. Pace':        '{:+.1f}',
-                }),
+                ind_display.style.map(_color_delta, subset=_style_cols).format(_fmt),
                 use_container_width=True, hide_index=True
             )
 
@@ -1072,7 +1108,7 @@ if df_raw is not None:
                 "La línea sólida es el acumulado real de CTs con al menos una AT registrada."
             )
 
-            _df_pace = df_seg.copy()
+            _df_pace = _df_ind_total.copy()
             _n_pace = int((_df_pace['Es_Programado'] == True).sum()) if 'Es_Programado' in _df_pace.columns else len(_df_pace)
 
             if _n_pace > 0 and 'Fecha real AT' in _df_pace.columns:
