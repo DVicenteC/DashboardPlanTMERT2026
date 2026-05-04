@@ -958,15 +958,20 @@ if df_raw is not None:
                 'Pilar 5 - Seguimiento'
             ]
 
-            def _build_ind(df_src):
-                """Construye tabla de indicadores agrupada por ergónomo."""
-                # Denominadores (CTs Asignados, Meta 5) usan solo los programados
-                # para no inflar con actividades fuera del plan.
-                _df_plan = (
-                    df_src[df_src['Es_Programado'] == True].copy()
-                    if 'Es_Programado' in df_src.columns
-                    else df_src.copy()
-                )
+            def _build_ind(df_src, modo='programado'):
+                """Construye tabla de indicadores agrupada por ergónomo.
+                modo: 'programado' (Es_Programado=True), 'no_programado' (=False),
+                       o 'todos' (sin filtro)."""
+                if 'Es_Programado' in df_src.columns and modo == 'programado':
+                    _df_plan = df_src[df_src['Es_Programado'] == True].copy()
+                elif 'Es_Programado' in df_src.columns and modo == 'no_programado':
+                    _df_plan = df_src[df_src['Es_Programado'] == False].copy()
+                else:
+                    _df_plan = df_src.copy()
+
+                if _df_plan.empty:
+                    return pd.DataFrame()
+
                 cols_p = [c for c in COLS_PILAR if c in _df_plan.columns]
                 grp = _df_plan.groupby('Ergonomo')
                 ind = pd.DataFrame()
@@ -987,6 +992,12 @@ if df_raw is not None:
                 ind['Eficiencia'] = (
                     ind['Meta 5'] / ind['Con alguna AT'].replace(0, float('nan')) * 100
                 ).round(1).fillna(0)
+                # Aporte %: contribución del profesional sobre total de actividades del equipo
+                _tot_at = int(ind['Con alguna AT'].sum())
+                if _tot_at > 0:
+                    ind['Aporte %'] = (ind['Con alguna AT'] / _tot_at * 100).round(1)
+                else:
+                    ind['Aporte %'] = 0.0
                 return ind
 
             # IDs con denuncia EP: desde df_raw (plan base, siempre tiene folios).
@@ -1036,13 +1047,9 @@ if df_raw is not None:
                     f"Filas tras filtro EP: {len(_df_ind_total)}"
                 )
 
-            # Promedio del equipo sobre el total (sin filtro EP)
-            ind_todos  = _build_ind(df_seg_raw) if not df_seg_raw.empty else pd.DataFrame()
+            # Promedio del equipo sobre el total programado (sin filtro EP)
+            ind_todos  = _build_ind(df_seg_raw, modo='programado') if not df_seg_raw.empty else pd.DataFrame()
             prom_meta5 = ind_todos['% Meta 5'].mean() if not ind_todos.empty else 0
-
-            # Tabla total (sidebar filtered, sin EP)
-            ind = _build_ind(_df_ind_total)
-            ind['vs. Promedio (pp)'] = (ind['% Meta 5'] - prom_meta5).round(1)
 
             # Pace: distribuir el total de CTs en 24 meses (Ene 2025 – Dic 2026)
             _inicio_plan    = pd.Timestamp('2025-01-01')
@@ -1052,26 +1059,39 @@ if df_raw is not None:
                     + (_hoy_calc.month - _inicio_plan.month) + 1, 1),
                 24
             )
-            ind['Esperado'] = (ind['CTs Asignados'] * _months_elapsed / 24).round(1)
-            ind['vs. Pace'] = (ind['Con alguna AT'] - ind['Esperado']).round(1)
 
-            # Columnas EP: agregar foco EP al mismo DataFrame
-            if not _df_ind_ep.empty:
-                _ind_ep = _build_ind(_df_ind_ep)
-                _ep_sub = _ind_ep[
-                    ['Ergónomo'] + [c for c in ['CTs Asignados', 'Meta 5', 'Con alguna AT'] if c in _ind_ep.columns]
-                ].rename(columns={
-                    'CTs Asignados': 'CTs EP',
-                    'Meta 5':        'Meta5 EP',
-                    'Con alguna AT': 'Con AT EP',
-                })
-                _ep_sub['% Meta5 EP'] = (
-                    _ep_sub['Meta5 EP'] / _ep_sub['CTs EP'].replace(0, float('nan')) * 100
-                ).round(1).fillna(0)
-                ind = ind.merge(_ep_sub, on='Ergónomo', how='left')
-                for _ec in ['CTs EP', 'Meta5 EP', 'Con AT EP', '% Meta5 EP']:
-                    if _ec in ind.columns:
-                        ind[_ec] = ind[_ec].fillna(0)
+            def _build_full_ind(df_base, modo):
+                """Arma indicadores con vs. Promedio, Esperado, vs. Pace y EP."""
+                _ind = _build_ind(df_base, modo=modo)
+                if _ind.empty:
+                    return _ind
+                _ind['vs. Promedio (pp)'] = (_ind['% Meta 5'] - prom_meta5).round(1)
+                if modo == 'programado':
+                    _ind['Esperado'] = (_ind['CTs Asignados'] * _months_elapsed / 24).round(1)
+                    _ind['vs. Pace'] = (_ind['Con alguna AT'] - _ind['Esperado']).round(1)
+                # Columnas EP (solo si _df_ind_ep tiene datos y solo_ep=False)
+                if not _df_ind_ep.empty:
+                    _ind_ep = _build_ind(_df_ind_ep, modo=modo)
+                    if not _ind_ep.empty:
+                        _ep_sub = _ind_ep[
+                            ['Ergónomo'] + [c for c in ['CTs Asignados', 'Meta 5', 'Con alguna AT']
+                                             if c in _ind_ep.columns]
+                        ].rename(columns={
+                            'CTs Asignados': 'CTs EP',
+                            'Meta 5':        'Meta5 EP',
+                            'Con alguna AT': 'Con AT EP',
+                        })
+                        _ep_sub['% Meta5 EP'] = (
+                            _ep_sub['Meta5 EP'] / _ep_sub['CTs EP'].replace(0, float('nan')) * 100
+                        ).round(1).fillna(0)
+                        _ind = _ind.merge(_ep_sub, on='Ergónomo', how='left')
+                        for _ec in ['CTs EP', 'Meta5 EP', 'Con AT EP', '% Meta5 EP']:
+                            if _ec in _ind.columns:
+                                _ind[_ec] = _ind[_ec].fillna(0)
+                return _ind
+
+            ind        = _build_full_ind(_df_ind_total, modo='programado')
+            ind_noprog = _build_full_ind(_df_ind_total, modo='no_programado')
 
             # ── NIVEL 1: Tabla resumen ─────────────────────────────────────
             st.markdown("#### 📋 Resumen por Profesional")
@@ -1091,21 +1111,11 @@ if df_raw is not None:
             st.info(
                 "**Columnas TOTAL**: sobre todos los CTs asignados del profesional.  \n"
                 "**Columnas EP**: solo sobre CTs con denuncias de EP.  \n"
+                "**Aporte %**: contribución del profesional sobre el total de actividades realizadas (Con alguna AT) del equipo.  \n"
                 "**Esperado**: CTs que debería tener con AT según pace lineal.  \n"
                 "**vs. Pace**: realizados menos esperados (positivo = adelantado).  \n"
                 "**Eficiencia**: de los que iniciaron, cuántos llegaron a Meta 5."
             )
-
-            _tiene_ep_cols = 'CTs EP' in ind.columns
-            cols_tabla1 = [
-                'Ergónomo',
-                'CTs Asignados', 'Meta 5', '% Meta 5', 'Con alguna AT', '% Inicio', 'Eficiencia',
-            ]
-            if _tiene_ep_cols:
-                cols_tabla1 += ['CTs EP', 'Meta5 EP', '% Meta5 EP', 'Con AT EP']
-            cols_tabla1 += ['Esperado', 'vs. Pace', 'vs. Promedio (pp)']
-
-            ind_display = ind[[c for c in cols_tabla1 if c in ind.columns]].sort_values('% Meta 5', ascending=False)
 
             _fmt = {
                 '% Inicio':          '{:.1f}%',
@@ -1115,12 +1125,43 @@ if df_raw is not None:
                 'Eficiencia':        '{:.1f}%',
                 'Esperado':          '{:.1f}',
                 'vs. Pace':          '{:+.1f}',
+                'Aporte %':          '{:.1f}%',
             }
-            _style_cols = [c for c in ['vs. Pace', 'vs. Promedio (pp)'] if c in ind_display.columns]
-            st.dataframe(
-                ind_display.style.map(_color_delta, subset=_style_cols).format(_fmt),
-                use_container_width=True, hide_index=True
-            )
+
+            def _render_grilla(_ind_df, _incluye_pace=True):
+                if _ind_df.empty:
+                    st.caption("Sin datos.")
+                    return
+                _tiene_ep = 'CTs EP' in _ind_df.columns
+                _cols = [
+                    'Ergónomo',
+                    'CTs Asignados', 'Meta 5', '% Meta 5', 'Con alguna AT', '% Inicio',
+                    'Aporte %', 'Eficiencia',
+                ]
+                if _tiene_ep:
+                    _cols += ['CTs EP', 'Meta5 EP', '% Meta5 EP', 'Con AT EP']
+                if _incluye_pace:
+                    _cols += ['Esperado', 'vs. Pace']
+                _cols += ['vs. Promedio (pp)']
+                _disp = _ind_df[[c for c in _cols if c in _ind_df.columns]] \
+                            .sort_values('% Meta 5', ascending=False)
+                _styled = [c for c in ['vs. Pace', 'vs. Promedio (pp)'] if c in _disp.columns]
+                st.dataframe(
+                    _disp.style.map(_color_delta, subset=_styled).format(_fmt),
+                    use_container_width=True, hide_index=True
+                )
+
+            _n_prog   = int((_df_ind_total['Es_Programado'] == True).sum()) \
+                            if 'Es_Programado' in _df_ind_total.columns else len(_df_ind_total)
+            _n_noprog = int((_df_ind_total['Es_Programado'] == False).sum()) \
+                            if 'Es_Programado' in _df_ind_total.columns else 0
+
+            st.markdown(f"##### 1) Programadas (n={_n_prog:,})")
+            _render_grilla(ind, _incluye_pace=True)
+
+            st.markdown(f"##### 2) No Programadas (n={_n_noprog:,})")
+            st.caption("Actividades realizadas fuera del plan que igualmente suman a la meta.")
+            _render_grilla(ind_noprog, _incluye_pace=False)
 
             st.divider()
 
