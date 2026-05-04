@@ -973,19 +973,18 @@ if df_raw is not None:
                     return pd.DataFrame()
 
                 cols_p = [c for c in COLS_PILAR if c in _df_plan.columns]
-                grp = _df_plan.groupby('Ergonomo')
                 ind = pd.DataFrame()
-                ind['CTs Asignados'] = grp['Ergonomo'].count()
+                ind['CTs Asignados'] = _df_plan.groupby('Ergonomo').size()
                 if cols_p:
-                    ind['Con alguna AT'] = grp.apply(
-                        lambda g: g[cols_p].any(axis=1).sum()
-                    )
+                    _any_at = _df_plan[cols_p].any(axis=1)
+                    ind['Con alguna AT'] = _any_at.groupby(_df_plan['Ergonomo']).sum()
                 else:
                     ind['Con alguna AT'] = 0
                 if 'Meta 5 Cumplida' in _df_plan.columns:
-                    ind['Meta 5'] = grp['Meta 5 Cumplida'].sum()
+                    ind['Meta 5'] = _df_plan.groupby('Ergonomo')['Meta 5 Cumplida'].sum()
                 else:
                     ind['Meta 5'] = 0
+                ind = ind.fillna(0)
                 ind = ind.reset_index().rename(columns={'Ergonomo': 'Ergónomo'})
                 ind['% Inicio'] = (ind['Con alguna AT'] / ind['CTs Asignados'] * 100).round(1)
                 ind['% Meta 5'] = (ind['Meta 5'] / ind['CTs Asignados'] * 100).round(1)
