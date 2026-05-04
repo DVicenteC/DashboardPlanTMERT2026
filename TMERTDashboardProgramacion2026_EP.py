@@ -882,16 +882,17 @@ if df_raw is not None:
 
             st.divider()
 
-            # Desglose por Pilares
+            # Desglose por Pilares (incluye Pilar 5 - Seguimiento)
             st.markdown("#### 🧱 Desglose por Pilares de Cumplimiento")
-            cp1, cp2, cp3, cp4 = st.columns(4)
+            cp1, cp2, cp3, cp4, cp5 = st.columns(5)
             for col_m, label, p_col in zip(
-                [cp1, cp2, cp3, cp4],
-                ["P1: Difusión", "P2: Capacitación", "P3: Diseño Cap", "P4: Prescripción Caract"],
-                ["Pilar 1 - Difusión", "Pilar 2 - Capacitación", "Pilar 3 - Diseño Cap Pract", "Pilar 4 - Prescripción Caract"]
+                [cp1, cp2, cp3, cp4, cp5],
+                ["P1: Difusión", "P2: Capacitación", "P3: Diseño Cap", "P4: Prescripción", "P5: Seguimiento"],
+                ["Pilar 1 - Difusión", "Pilar 2 - Capacitación", "Pilar 3 - Diseño Cap Pract",
+                 "Pilar 4 - Prescripción Caract", "Pilar 5 - Seguimiento"]
             ):
                 if p_col in df_seg.columns:
-                    val = df_seg[p_col].sum()
+                    val = int(df_seg[p_col].sum())
                     col_m.metric(label, f"{val:,}", f"{(val/total_plan*100):.0f}%" if total_plan > 0 else "0%")
 
             st.divider()
@@ -953,7 +954,8 @@ if df_raw is not None:
 
             COLS_PILAR = [
                 'Pilar 1 - Difusión', 'Pilar 2 - Capacitación',
-                'Pilar 3 - Diseño Cap Pract', 'Pilar 4 - Prescripción Caract'
+                'Pilar 3 - Diseño Cap Pract', 'Pilar 4 - Prescripción Caract',
+                'Pilar 5 - Seguimiento'
             ]
 
             def _build_ind(df_src):
@@ -1232,40 +1234,48 @@ if df_raw is not None:
 
             st.divider()
 
-            # ── NIVEL 2: Desglose por pilar ────────────────────────────────
+            # ── NIVEL 2: Desglose por pilar (separado: Programado vs. No Programado) ──
             st.markdown("#### 🧱 Avance por Pilar")
             cols_p = [c for c in COLS_PILAR if c in df_seg.columns]
-            if cols_p:
+
+            def _tabla_pilar(df_subset, cols_p):
                 pilar_data = []
-                for ergo, grp in df_seg.groupby('Ergonomo'):
+                for ergo, grp in df_subset.groupby('Ergonomo'):
                     total = len(grp)
                     for col in cols_p:
                         n = int(grp[col].sum()) if col in grp.columns else 0
                         pilar_data.append({
                             'Ergónomo': ergo,
-                            'Pilar': col.replace('Pilar ', 'P').replace(' - ', ': ').replace(' Cap Pract', ' Cap').replace(' Caract', ''),
-                            'CTs': n,
-                            '%': round(n / total * 100, 1) if total > 0 else 0.0
+                            'Pilar': col.replace('Pilar ', 'P').replace(' - ', ': ')
+                                        .replace(' Cap Pract', ' Cap').replace(' Caract', ''),
+                            'N (%)': f"{n} ({round(n / total * 100, 1) if total > 0 else 0.0}%)"
                         })
-                df_pilar = pd.DataFrame(pilar_data)
+                if not pilar_data:
+                    return pd.DataFrame()
+                return (pd.DataFrame(pilar_data)
+                        .pivot(index='Ergónomo', columns='Pilar', values='N (%)')
+                        .reset_index())
 
-                # Tabla pilar con N (X%)
-                df_pilar_tabla = df_pilar.copy()
-                df_pilar_tabla['N (%)'] = df_pilar_tabla.apply(
-                    lambda r: f"{int(r['CTs'])} ({r['%']}%)", axis=1)
-                tabla_pilar = df_pilar_tabla.pivot(index='Ergónomo', columns='Pilar', values='N (%)').reset_index()
-                st.dataframe(tabla_pilar, use_container_width=True, hide_index=True)
+            if cols_p and not df_seg.empty:
+                if 'Es_Programado' in df_seg.columns:
+                    df_prog_only = df_seg[df_seg['Es_Programado'] == True]
+                    df_nopr_only = df_seg[df_seg['Es_Programado'] == False]
+                else:
+                    df_prog_only, df_nopr_only = df_seg, df_seg.iloc[0:0]
 
-                # Gráfico barras por pilar
-                fig_pil = px.bar(
-                    df_pilar, x='Pilar', y='%', color='Ergónomo',
-                    barmode='group', text='%',
-                    labels={'%': '% CTs con pilar cumplido'},
-                    color_discrete_sequence=px.colors.qualitative.Set2,
-                )
-                fig_pil.update_traces(texttemplate='%{text}%', textposition='outside')
-                fig_pil.update_layout(legend_title_text='Profesional')
-                st.plotly_chart(fig_pil, use_container_width=True)
+                st.markdown(f"**📋 Programado** — {len(df_prog_only):,} CTs")
+                _t1 = _tabla_pilar(df_prog_only, cols_p)
+                if not _t1.empty:
+                    st.dataframe(_t1, use_container_width=True, hide_index=True)
+                else:
+                    st.caption("Sin datos.")
+
+                st.markdown(f"**📋 No Programado** — {len(df_nopr_only):,} CTs")
+                _t2 = _tabla_pilar(df_nopr_only, cols_p)
+                if not _t2.empty:
+                    st.dataframe(_t2, use_container_width=True, hide_index=True)
+                else:
+                    st.caption("Sin datos.")
             else:
                 st.info("No hay columnas de pilares disponibles en los datos.")
 
