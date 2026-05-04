@@ -758,9 +758,17 @@ if df_raw is not None:
 
     # Aplicar los mismos filtros sobre df_seg (fuente separada)
     df_seg = df_seg_raw.copy() if not df_seg_raw.empty else pd.DataFrame()
-    # Filtro EP: cuando solo_ep está activo, limitar seguimiento a CTs con denuncias
-    if solo_ep and not df_seg.empty and 'folios' in df_seg.columns:
-        df_seg = df_seg[df_seg['folios'].astype(str).str.strip().ne('')]
+    # Filtro EP: el seguimiento NO tiene 'folios' (esa columna vive sólo en df_raw/plan).
+    # Por eso cruzamos por ID-CT contra los CTs marcados como Tiene EP en el plan.
+    if solo_ep and not df_seg.empty and 'ID-CT' in df_seg.columns \
+            and 'ID-CT' in df_raw.columns and 'Tiene EP' in df_raw.columns:
+        _ep_ids_seg = set(
+            df_raw.loc[df_raw['Tiene EP'] == True, 'ID-CT']
+                  .astype(str).str.upper().str.strip()
+        )
+        df_seg = df_seg[
+            df_seg['ID-CT'].astype(str).str.upper().str.strip().isin(_ep_ids_seg)
+        ]
     if not df_seg.empty:
         if filtro_ergo != "Todos" and 'Ergonomo' in df_seg.columns:
             df_seg = df_seg[df_seg['Ergonomo'] == filtro_ergo]
@@ -974,35 +982,52 @@ if df_raw is not None:
                 ).round(1).fillna(0)
                 return ind
 
-            # IDs con denuncia EP: vienen de df_raw (plan base, siempre tiene folios).
-            # Calculados antes de armar _df_ind_total para poder aplicarlos si solo_ep=True.
+            # IDs con denuncia EP: desde df_raw (plan base, siempre tiene folios).
             _ep_ct_ids = set()
             if 'ID-CT' in df_raw.columns and 'Tiene EP' in df_raw.columns:
                 _ep_ct_ids = set(
-                    df_raw[df_raw['Tiene EP'] == True]['ID-CT'].astype(str).str.upper()
+                    df_raw.loc[df_raw['Tiene EP'] == True, 'ID-CT']
+                          .astype(str).str.upper().str.strip()
                 )
 
             # Base para Tab 4: filtros del sidebar + filtro EP cuando el toggle está activo.
             _df_ind_total = df_seg_raw.copy() if not df_seg_raw.empty else pd.DataFrame()
+            if not _df_ind_total.empty and 'ID-CT' in _df_ind_total.columns:
+                # Normalizar ID-CT del seguimiento una vez (upper+strip) para match consistente
+                _df_ind_total['_ID_NORM'] = (
+                    _df_ind_total['ID-CT'].astype(str).str.upper().str.strip()
+                )
             if not _df_ind_total.empty:
                 for _k, _col_f, _all_v in _defs_t:
                     _v = st.session_state.get(_k, _all_v)
                     if _v != _all_v and _col_f in _df_ind_total.columns:
                         _df_ind_total = _df_ind_total[_df_ind_total[_col_f] == _v]
                 # Aplicar filtro EP si toggle activo
-                if solo_ep and _ep_ct_ids and 'ID-CT' in _df_ind_total.columns:
+                if solo_ep and _ep_ct_ids and '_ID_NORM' in _df_ind_total.columns:
                     _df_ind_total = _df_ind_total[
-                        _df_ind_total['ID-CT'].astype(str).str.upper().isin(_ep_ct_ids)
+                        _df_ind_total['_ID_NORM'].isin(_ep_ct_ids)
                     ].copy()
 
-            # Foco EP como subconjunto (solo relevante cuando solo_ep=False; cuando es True
-            # _df_ind_total ya está filtrado y _df_ind_ep queda vacío para no duplicar columnas)
-            if not solo_ep and _ep_ct_ids and not _df_ind_total.empty and 'ID-CT' in _df_ind_total.columns:
+            # Foco EP como subconjunto (solo si solo_ep=False)
+            if not solo_ep and _ep_ct_ids and not _df_ind_total.empty and '_ID_NORM' in _df_ind_total.columns:
                 _df_ind_ep = _df_ind_total[
-                    _df_ind_total['ID-CT'].astype(str).str.upper().isin(_ep_ct_ids)
+                    _df_ind_total['_ID_NORM'].isin(_ep_ct_ids)
                 ].copy()
             else:
                 _df_ind_ep = pd.DataFrame()
+
+            # Diagnóstico (visible solo si toggle EP está activo) para ayudar a depurar match
+            if solo_ep:
+                _seg_ids = set(
+                    df_seg_raw['ID-CT'].astype(str).str.upper().str.strip()
+                ) if 'ID-CT' in df_seg_raw.columns else set()
+                _matches = len(_ep_ct_ids & _seg_ids)
+                st.caption(
+                    f"🔎 Diagnóstico EP — IDs EP en plan: {len(_ep_ct_ids)} · "
+                    f"IDs en seguimiento: {len(_seg_ids)} · "
+                    f"Coincidencias: {_matches} · "
+                    f"Filas tras filtro EP: {len(_df_ind_total)}"
+                )
 
             # Promedio del equipo sobre el total (sin filtro EP)
             ind_todos  = _build_ind(df_seg_raw) if not df_seg_raw.empty else pd.DataFrame()
