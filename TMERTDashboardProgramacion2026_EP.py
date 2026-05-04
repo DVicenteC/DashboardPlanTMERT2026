@@ -233,6 +233,11 @@ def load_data():
         # Un registro tiene EP si su celda de folios contiene al menos un valor no vacío
         df['Tiene EP'] = df['folios'].astype(str).str.strip().ne("")
 
+        # Alias 'ID-CT' como duplicado de la columna larga (sin renombrar la original)
+        _id_long = next((c for c in df.columns if 'Identificador' in c and 'CT' in c), None)
+        if _id_long and 'ID-CT' not in df.columns:
+            df['ID-CT'] = df[_id_long].astype(str).str.upper().str.strip()
+
         # Columnas base
         if 'Región' in df.columns:
             df['Región'] = df['Región'].fillna("S/R").astype(str).str.replace(".0", "", regex=False)
