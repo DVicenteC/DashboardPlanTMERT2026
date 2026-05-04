@@ -972,6 +972,14 @@ if df_raw is not None:
                 if _df_plan.empty:
                     return pd.DataFrame()
 
+                # Rellenar Ergonomo vacío (típico en no programados) sin tocar el dato origen
+                _df_plan = _df_plan.copy()
+                _df_plan['Ergonomo'] = (
+                    _df_plan['Ergonomo'].astype(str).str.strip()
+                    .replace({'': 'Sin asignar', 'nan': 'Sin asignar', 'None': 'Sin asignar'})
+                    .fillna('Sin asignar')
+                )
+
                 cols_p = [c for c in COLS_PILAR if c in _df_plan.columns]
                 ind = pd.DataFrame()
                 ind['CTs Asignados'] = _df_plan.groupby('Ergonomo').size()
