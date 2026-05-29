@@ -466,17 +466,21 @@ def serie_acumulada(fechas, idx):
     return np.searchsorted(s.values, np.asarray(idx.values), side='right')
 
 
-def meta5_fecha_aprox(df_seg):
-    """Fecha aproximada en que cada CT alcanzó Meta 5 = fecha del ÚLTIMO de los
-    4 pilares fechados, restringido a CTs que HOY tienen 'Meta 5 Cumplida'.
-    Devuelve una serie de fechas (NaT donde no aplica)."""
+def cuatro_pilares_fecha(df_seg):
+    """Fecha EXACTA en que cada CT completó los 4 pilares fechables = fecha del
+    ÚLTIMO de los 4 pilares, exigiendo que los 4 tengan fecha. Devuelve una serie
+    de fechas (NaT donde falta algún pilar).
+
+    Es el precursor de Meta 5 y su techo: como Meta 5 además exige el Seguimiento
+    (sin fecha en SIGECO), la Meta 5 real a cualquier fecha pasada es <= esta curva.
+    No se aproxima nada: cuenta solo CTs con sus 4 pilares efectivamente fechados."""
     cols = [c for c in PILAR_FECHA_REAL.values() if c in df_seg.columns]
-    if not cols or 'Meta 5 Cumplida' not in df_seg.columns:
+    if not cols:
         return pd.Series(pd.NaT, index=df_seg.index)
     fechas = df_seg[cols].apply(pd.to_datetime, errors='coerce')
+    todas_presentes = fechas.notna().all(axis=1)
     ult = fechas.max(axis=1)  # el pilar más tardío
-    # Solo para los que efectivamente cumplen Meta 5 hoy
-    return ult.where(df_seg['Meta 5 Cumplida'] == True, other=pd.NaT)
+    return ult.where(todas_presentes, other=pd.NaT)
 
 
 # ── 6. FUNCIÓN PARETO EP ──────────────────────────────────────────────────────
@@ -1006,10 +1010,12 @@ if df_raw is not None:
                 "con resolución diaria, hacia atrás hasta enero 2025."
             )
             st.info(
-                "⚠️ **Meta 5 es aproximada**: el Pilar 5 (Seguimiento) no tiene fecha en SIGECO "
-                "(solo el estado *Seguimiento 1/2*). Por eso Meta 5 se ubica en la fecha del "
-                "**último de los 4 pilares fechados**, contando solo los CTs que hoy cumplen Meta 5. "
-                "Los pilares 1–4 sí son exactos. La curva respeta los filtros del panel lateral."
+                "ℹ️ La curva muestra los **4 pilares fechables** (1–4) y el hito **«4 Pilares "
+                "completos»**, todos **exactos**. La **Meta 5 NO se grafica en el tiempo**: exige "
+                "además el Seguimiento, que SIGECO no informa con fecha (solo el estado "
+                "*Seguimiento 1/2*). «4 Pilares completos» es el **techo** de Meta 5 — la Meta 5 "
+                "real a cualquier fecha pasada va por debajo. La Meta 5 de hoy se muestra como "
+                "referencia estática. La curva respeta los filtros del panel lateral."
             )
 
             cols_fecha_pilar = {p: c for p, c in PILAR_FECHA_REAL.items() if c in df_seg.columns}
@@ -1018,7 +1024,9 @@ if df_raw is not None:
             if not cols_fecha_pilar or total_plan_evo == 0:
                 st.warning("No hay columnas de fecha real de pilares en los datos de seguimiento.")
             else:
-                _m5_fecha = meta5_fecha_aprox(df_seg)
+                _4p_fecha = cuatro_pilares_fecha(df_seg)
+                _meta5_hoy_real = int(df_seg['Meta 5 Cumplida'].sum()) \
+                    if 'Meta 5 Cumplida' in df_seg.columns else 0
 
                 # ── 1. Selector de fecha ───────────────────────────────────────
                 _hoy_evo = pd.Timestamp.today().normalize()
@@ -1035,41 +1043,46 @@ if df_raw is not None:
                 _t_2sem = _t_sel - timedelta(days=14)
                 _t_1mes = _t_sel - timedelta(days=30)
 
-                # Conteo de cumplidos a una fecha dada (pilares + Meta 5)
+                # Conteo de cumplidos a una fecha dada (pilares + 4 Pilares completos)
                 def _cumplidos_a(t):
                     res = {}
                     for _p, _c in cols_fecha_pilar.items():
                         _f = pd.to_datetime(df_seg[_c], errors='coerce')
                         res[_p] = int((_f <= t).sum())
-                    res['Meta 5'] = int((_m5_fecha <= t).sum())
+                    res['4 Pilares'] = int((_4p_fecha <= t).sum())
                     return res
 
                 _hoy_cnt  = _cumplidos_a(_t_sel)
                 _2sem_cnt = _cumplidos_a(_t_2sem)
                 _1mes_cnt = _cumplidos_a(_t_1mes)
 
-                # ── 2. Tarjetas Meta 5 con deltas ──────────────────────────────
-                st.markdown(f"#### 🎯 Meta 5 al **{_t_sel.strftime('%d-%m-%Y')}** (aprox.)")
-                _m5_hoy  = _hoy_cnt['Meta 5']
-                _m5_2sem = _2sem_cnt['Meta 5']
-                _m5_1mes = _1mes_cnt['Meta 5']
-                _pct_m5  = (_m5_hoy / total_plan_evo * 100) if total_plan_evo else 0
+                # ── 2. Tarjetas «4 Pilares completos» con deltas ───────────────
+                st.markdown(f"#### 🎯 4 Pilares completos al **{_t_sel.strftime('%d-%m-%Y')}**")
+                _4p_hoy  = _hoy_cnt['4 Pilares']
+                _4p_2sem = _2sem_cnt['4 Pilares']
+                _4p_1mes = _1mes_cnt['4 Pilares']
+                _pct_4p  = (_4p_hoy / total_plan_evo * 100) if total_plan_evo else 0
                 mc1, mc2, mc3 = st.columns(3)
                 mc1.metric(
-                    "Meta 5 a la fecha",
-                    f"{_m5_hoy:,}",
-                    f"{_pct_m5:.1f}% del plan ({total_plan_evo:,} CTs)",
+                    "4 Pilares completos",
+                    f"{_4p_hoy:,}",
+                    f"{_pct_4p:.1f}% del plan ({total_plan_evo:,} CTs)",
                     delta_color="off",
                 )
                 mc2.metric(
                     "vs. hace 2 semanas",
-                    f"{_m5_hoy:,}",
-                    f"{_m5_hoy - _m5_2sem:+,} CTs",
+                    f"{_4p_hoy:,}",
+                    f"{_4p_hoy - _4p_2sem:+,} CTs",
                 )
                 mc3.metric(
                     "vs. hace 1 mes",
-                    f"{_m5_hoy:,}",
-                    f"{_m5_hoy - _m5_1mes:+,} CTs",
+                    f"{_4p_hoy:,}",
+                    f"{_4p_hoy - _4p_1mes:+,} CTs",
+                )
+                st.caption(
+                    f"📌 **Meta 5 hoy (real, con Seguimiento): {_meta5_hoy_real:,} CTs** "
+                    f"({_meta5_hoy_real / total_plan_evo * 100:.1f}% del plan). "
+                    "Sin serie temporal: el Pilar 5 no tiene fecha en SIGECO."
                 )
 
                 st.divider()
@@ -1077,7 +1090,7 @@ if df_raw is not None:
                 # ── 3. Foto por pilar a la fecha (con deltas) ──────────────────
                 st.markdown("#### 🧱 Foto por Pilar a la Fecha Seleccionada")
                 _filas = []
-                for _p in list(cols_fecha_pilar.keys()) + ['Meta 5']:
+                for _p in list(cols_fecha_pilar.keys()) + ['4 Pilares']:
                     _lbl = PILAR_LABEL_CORTO.get(_p, _p)
                     _n = _hoy_cnt[_p]
                     _filas.append({
@@ -1126,16 +1139,17 @@ if df_raw is not None:
                         hovertemplate='%{x|%d-%m-%Y}<br>%{y:.0f}<extra>' + PILAR_LABEL_CORTO.get(_p, _p) + '</extra>',
                     ))
 
-                # Meta 5 (aproximada) — línea gruesa púrpura institucional
-                _y_m5 = serie_acumulada(_m5_fecha, _idx) / _div
+                # 4 Pilares completos (exacto) — línea gruesa púrpura institucional
+                _y_4p = serie_acumulada(_4p_fecha, _idx) / _div
                 _fig_evo.add_trace(go.Scatter(
-                    x=_idx, y=_y_m5, name='Meta 5 (aprox.)',
+                    x=_idx, y=_y_4p, name='4 Pilares completos',
                     mode='lines', line=dict(width=3.2, color='#4F0B7B'),
-                    hovertemplate='%{x|%d-%m-%Y}<br>%{y:.0f}<extra>Meta 5 (aprox.)</extra>',
+                    hovertemplate='%{x|%d-%m-%Y}<br>%{y:.0f}<extra>4 Pilares completos</extra>',
                 ))
 
                 # Pace esperado: lineal 0 -> total_plan entre Ene-2025 y Dic-2026
-                _frac = ((_idx - EVO_INICIO) / (EVO_FIN_PLAN - EVO_INICIO)).clip(0, 1)
+                _secs = np.asarray((_idx - EVO_INICIO).total_seconds())
+                _frac = np.clip(_secs / (EVO_FIN_PLAN - EVO_INICIO).total_seconds(), 0, 1)
                 _y_pace = (total_plan_evo * _frac) / _div
                 _fig_evo.add_trace(go.Scatter(
                     x=_idx, y=_y_pace, name='Pace esperado',
