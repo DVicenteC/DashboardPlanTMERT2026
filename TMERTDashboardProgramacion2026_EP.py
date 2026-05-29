@@ -883,10 +883,9 @@ if df_raw is not None:
         "📊 Programación",
         "🔍 Análisis de Denuncias EP",
         "✅ Estado Seguimiento",
-        "📈 Evolución",
-        "👨‍⚕️ Indicadores por Profesional",
+        "👨‍⚕️ Evolución e Indicadores por Profesional",
     ])
-    tab1, tab2, tab_seg, tab_evo, tab_ind = tabs
+    tab1, tab2, tab_seg, tab_ind = tabs
 
     # ── TAB 1: PROGRAMACIÓN ───────────────────────────────────────────────────
     with tab1:
@@ -998,193 +997,12 @@ if df_raw is not None:
                 key='download_seg'
             )
 
-    # ── TAB: EVOLUCIÓN TEMPORAL ───────────────────────────────────────────────
-    with tab_evo:
-        if df_seg.empty:
-            st.info("ℹ️ Se requiere data de seguimiento para reconstruir la evolución.")
-        else:
-            st.subheader("📈 Evolución del Cumplimiento en el Tiempo")
-            st.caption(
-                "Reconstruido a partir de las **fechas reales de ejecución** de cada pilar "
-                "registradas en SIGECO. Permite responder *¿cómo estábamos en cualquier fecha?* "
-                "con resolución diaria, hacia atrás hasta enero 2025."
-            )
-            st.info(
-                "ℹ️ La curva muestra los **4 pilares fechables** (1–4) y el hito **«4 Pilares "
-                "completos»**, todos **exactos**. La **Meta 5 NO se grafica en el tiempo**: exige "
-                "además el Seguimiento, que SIGECO no informa con fecha (solo el estado "
-                "*Seguimiento 1/2*). «4 Pilares completos» es el **techo** de Meta 5 — la Meta 5 "
-                "real a cualquier fecha pasada va por debajo. La Meta 5 de hoy se muestra como "
-                "referencia estática. La curva respeta los filtros del panel lateral."
-            )
-
-            cols_fecha_pilar = {p: c for p, c in PILAR_FECHA_REAL.items() if c in df_seg.columns}
-            total_plan_evo = len(df_seg)
-
-            if not cols_fecha_pilar or total_plan_evo == 0:
-                st.warning("No hay columnas de fecha real de pilares en los datos de seguimiento.")
-            else:
-                _4p_fecha = cuatro_pilares_fecha(df_seg)
-                _meta5_hoy_real = int(df_seg['Meta 5 Cumplida'].sum()) \
-                    if 'Meta 5 Cumplida' in df_seg.columns else 0
-
-                # ── 1. Selector de fecha ───────────────────────────────────────
-                _hoy_evo = pd.Timestamp.today().normalize()
-                cs1, cs2 = st.columns([2, 3])
-                with cs1:
-                    _fecha_sel = st.date_input(
-                        "📅 Ver estado a la fecha:",
-                        value=_hoy_evo.date(),
-                        min_value=EVO_INICIO.date(),
-                        max_value=_hoy_evo.date(),
-                        format="DD-MM-YYYY",
-                    )
-                _t_sel = pd.Timestamp(_fecha_sel)
-                _t_2sem = _t_sel - timedelta(days=14)
-                _t_1mes = _t_sel - timedelta(days=30)
-
-                # Conteo de cumplidos a una fecha dada (pilares + 4 Pilares completos)
-                def _cumplidos_a(t):
-                    res = {}
-                    for _p, _c in cols_fecha_pilar.items():
-                        _f = pd.to_datetime(df_seg[_c], errors='coerce')
-                        res[_p] = int((_f <= t).sum())
-                    res['4 Pilares'] = int((_4p_fecha <= t).sum())
-                    return res
-
-                _hoy_cnt  = _cumplidos_a(_t_sel)
-                _2sem_cnt = _cumplidos_a(_t_2sem)
-                _1mes_cnt = _cumplidos_a(_t_1mes)
-
-                # ── 2. Tarjetas «4 Pilares completos» con deltas ───────────────
-                st.markdown(f"#### 🎯 4 Pilares completos al **{_t_sel.strftime('%d-%m-%Y')}**")
-                _4p_hoy  = _hoy_cnt['4 Pilares']
-                _4p_2sem = _2sem_cnt['4 Pilares']
-                _4p_1mes = _1mes_cnt['4 Pilares']
-                _pct_4p  = (_4p_hoy / total_plan_evo * 100) if total_plan_evo else 0
-                mc1, mc2, mc3 = st.columns(3)
-                mc1.metric(
-                    "4 Pilares completos",
-                    f"{_4p_hoy:,}",
-                    f"{_pct_4p:.1f}% del plan ({total_plan_evo:,} CTs)",
-                    delta_color="off",
-                )
-                mc2.metric(
-                    "vs. hace 2 semanas",
-                    f"{_4p_hoy:,}",
-                    f"{_4p_hoy - _4p_2sem:+,} CTs",
-                )
-                mc3.metric(
-                    "vs. hace 1 mes",
-                    f"{_4p_hoy:,}",
-                    f"{_4p_hoy - _4p_1mes:+,} CTs",
-                )
-                st.caption(
-                    f"📌 **Meta 5 hoy (real, con Seguimiento): {_meta5_hoy_real:,} CTs** "
-                    f"({_meta5_hoy_real / total_plan_evo * 100:.1f}% del plan). "
-                    "Sin serie temporal: el Pilar 5 no tiene fecha en SIGECO."
-                )
-
-                st.divider()
-
-                # ── 3. Foto por pilar a la fecha (con deltas) ──────────────────
-                st.markdown("#### 🧱 Foto por Pilar a la Fecha Seleccionada")
-                _filas = []
-                for _p in list(cols_fecha_pilar.keys()) + ['4 Pilares']:
-                    _lbl = PILAR_LABEL_CORTO.get(_p, _p)
-                    _n = _hoy_cnt[_p]
-                    _filas.append({
-                        'Pilar': _lbl,
-                        'Cumplidos a la fecha': _n,
-                        '% del plan': round(_n / total_plan_evo * 100, 1) if total_plan_evo else 0.0,
-                        'Hace 2 sem': _2sem_cnt[_p],
-                        'Δ 2 sem': _n - _2sem_cnt[_p],
-                        'Hace 1 mes': _1mes_cnt[_p],
-                        'Δ 1 mes': _n - _1mes_cnt[_p],
-                    })
-                _df_foto = pd.DataFrame(_filas)
-                st.dataframe(
-                    _df_foto.style.map(
-                        lambda v: 'color:#2e7d32;font-weight:bold' if isinstance(v, (int, float)) and v > 0
-                        else ('color:#c62828;font-weight:bold' if isinstance(v, (int, float)) and v < 0 else ''),
-                        subset=['Δ 2 sem', 'Δ 1 mes'],
-                    ).format({'% del plan': '{:.1f}%'}),
-                    use_container_width=True, hide_index=True,
-                )
-
-                st.divider()
-
-                # ── 4. Curva de avance acumulado + pace ────────────────────────
-                st.markdown("#### 📈 Curva de Avance Acumulado vs. Pace Esperado")
-                _ver_pct = st.toggle("Ver en % del plan", value=False, key="evo_pct")
-
-                _idx = pd.date_range(EVO_INICIO, _hoy_evo, freq='D')
-                _div = (total_plan_evo / 100.0) if (_ver_pct and total_plan_evo) else 1.0
-
-                _colores_p = {
-                    'Pilar 1 - Difusión':            '#7B2D8B',
-                    'Pilar 2 - Capacitación':        '#E67E22',
-                    'Pilar 3 - Diseño Cap Pract':    '#1A936F',
-                    'Pilar 4 - Prescripción Caract': '#2E86AB',
-                }
-
-                _fig_evo = go.Figure()
-
-                # Pilares 1-4 (exactos)
-                for _p, _c in cols_fecha_pilar.items():
-                    _y = serie_acumulada(df_seg[_c], _idx) / _div
-                    _fig_evo.add_trace(go.Scatter(
-                        x=_idx, y=_y, name=PILAR_LABEL_CORTO.get(_p, _p),
-                        mode='lines', line=dict(width=1.8, color=_colores_p.get(_p)),
-                        hovertemplate='%{x|%d-%m-%Y}<br>%{y:.0f}<extra>' + PILAR_LABEL_CORTO.get(_p, _p) + '</extra>',
-                    ))
-
-                # 4 Pilares completos (exacto) — línea gruesa púrpura institucional
-                _y_4p = serie_acumulada(_4p_fecha, _idx) / _div
-                _fig_evo.add_trace(go.Scatter(
-                    x=_idx, y=_y_4p, name='4 Pilares completos',
-                    mode='lines', line=dict(width=3.2, color='#4F0B7B'),
-                    hovertemplate='%{x|%d-%m-%Y}<br>%{y:.0f}<extra>4 Pilares completos</extra>',
-                ))
-
-                # Pace esperado: lineal 0 -> total_plan entre Ene-2025 y Dic-2026
-                _secs = np.asarray((_idx - EVO_INICIO).total_seconds())
-                _frac = np.clip(_secs / (EVO_FIN_PLAN - EVO_INICIO).total_seconds(), 0, 1)
-                _y_pace = (total_plan_evo * _frac) / _div
-                _fig_evo.add_trace(go.Scatter(
-                    x=_idx, y=_y_pace, name='Pace esperado',
-                    mode='lines', line=dict(width=2, color='#E41395', dash='dash'),
-                    hovertemplate='%{x|%d-%m-%Y}<br>%{y:.0f}<extra>Pace esperado</extra>',
-                ))
-
-                # Línea vertical en la fecha seleccionada
-                _fig_evo.add_shape(
-                    type='line', xref='x', yref='paper',
-                    x0=_t_sel, x1=_t_sel, y0=0, y1=1,
-                    line=dict(color='gray', width=1.5, dash='dot'),
-                )
-                _fig_evo.add_annotation(
-                    x=_t_sel, y=1, xref='x', yref='paper',
-                    text=_t_sel.strftime('%d-%m-%Y'), showarrow=False,
-                    xanchor='left', yanchor='bottom', font=dict(color='gray', size=11),
-                )
-
-                _fig_evo.update_layout(
-                    xaxis_title='Fecha',
-                    yaxis_title='% del plan' if _ver_pct else 'CTs acumulados',
-                    plot_bgcolor='white', paper_bgcolor='white',
-                    legend=dict(orientation='h', yanchor='bottom', y=1.02, x=0),
-                    height=460, margin=dict(l=10, r=20, t=30, b=40),
-                    hovermode='x unified',
-                )
-                st.plotly_chart(_fig_evo, use_container_width=True)
-
-    # ── TAB: INDICADORES POR PROFESIONAL ─────────────────────────────────────
+    # ── TAB: EVOLUCIÓN E INDICADORES POR PROFESIONAL ──────────────────────────
     with tab_ind:
         if df_seg.empty:
             st.info("ℹ️ Se requiere data de seguimiento para calcular indicadores por profesional.")
         else:
-            st.subheader("👨‍⚕️ Indicadores por Profesional — Avance TMERT 2026")
+            st.subheader("👨‍⚕️ Evolución e Indicadores por Profesional — TMERT 2026")
 
             COLS_PILAR = [
                 'Pilar 1 - Difusión', 'Pilar 2 - Capacitación',
@@ -1406,24 +1224,87 @@ if df_raw is not None:
 
             st.divider()
 
-            # ── NIVEL 3: Ranking horizontal % Meta 5 vs. promedio equipo ──
-            st.markdown("#### 📊 Ritmo relativo al equipo — % Meta 5")
-            ind_sorted = ind.sort_values('% Meta 5', ascending=True)
-            fig_rank = px.bar(
-                ind_sorted, y='Ergónomo', x='% Meta 5',
-                orientation='h',
-                color='vs. Promedio (pp)',
-                color_continuous_scale=[[0, '#c62828'], [0.5, '#e0e0e0'], [1, '#2e7d32']],
-                color_continuous_midpoint=0,
-                text='% Meta 5',
-                labels={'% Meta 5': '% Meta 5 Cumplida'},
+            # ── CURVA DE AVANCE ACUMULADO vs. PACE ESPERADO ───────────────
+            st.markdown("#### 📈 Curva de Avance Acumulado vs. Pace Esperado")
+            st.caption(
+                "Reconstruida con las **fechas reales de ejecución** de SIGECO (resolución diaria, "
+                "desde ene-2025). Pilares 1–4 y «4 Pilares completos» son **exactos**. La **Meta 5 "
+                "no se grafica**: exige el Seguimiento, que SIGECO no informa con fecha — "
+                "«4 Pilares completos» es su **techo**. Respeta los filtros del panel lateral."
             )
-            fig_rank.add_vline(x=prom_meta5, line_dash='dash', line_color='#4F0B7B',
-                               annotation_text=f'Promedio {prom_meta5:.1f}%',
-                               annotation_position='top right')
-            fig_rank.update_traces(texttemplate='%{text}%', textposition='outside')
-            fig_rank.update_layout(coloraxis_showscale=False, margin=dict(l=10, r=40))
-            st.plotly_chart(fig_rank, use_container_width=True)
+
+            _cols_fp = {p: c for p, c in PILAR_FECHA_REAL.items() if c in df_seg.columns}
+            _total_evo = len(df_seg)
+
+            if not _cols_fp or _total_evo == 0:
+                st.info("No hay columnas de fecha real de pilares para construir la curva.")
+            else:
+                _4p_fecha = cuatro_pilares_fecha(df_seg)
+                _meta5_real = int(df_seg['Meta 5 Cumplida'].sum()) \
+                    if 'Meta 5 Cumplida' in df_seg.columns else 0
+                _hoy_evo = pd.Timestamp.today().normalize()
+
+                _ver_pct = st.toggle("Ver en % del plan", value=False, key="evo_pct")
+                _idx = pd.date_range(EVO_INICIO, _hoy_evo, freq='D')
+                _div = (_total_evo / 100.0) if (_ver_pct and _total_evo) else 1.0
+
+                _colores_p = {
+                    'Pilar 1 - Difusión':            '#7B2D8B',
+                    'Pilar 2 - Capacitación':        '#E67E22',
+                    'Pilar 3 - Diseño Cap Pract':    '#1A936F',
+                    'Pilar 4 - Prescripción Caract': '#2E86AB',
+                }
+
+                _fig_evo = go.Figure()
+                for _p, _c in _cols_fp.items():
+                    _y = serie_acumulada(df_seg[_c], _idx) / _div
+                    _fig_evo.add_trace(go.Scatter(
+                        x=_idx, y=_y, name=PILAR_LABEL_CORTO.get(_p, _p),
+                        mode='lines', line=dict(width=1.8, color=_colores_p.get(_p)),
+                        hovertemplate='%{x|%d-%m-%Y}<br>%{y:.0f}<extra>' + PILAR_LABEL_CORTO.get(_p, _p) + '</extra>',
+                    ))
+
+                _y_4p = serie_acumulada(_4p_fecha, _idx) / _div
+                _fig_evo.add_trace(go.Scatter(
+                    x=_idx, y=_y_4p, name='4 Pilares completos',
+                    mode='lines', line=dict(width=3.2, color='#4F0B7B'),
+                    hovertemplate='%{x|%d-%m-%Y}<br>%{y:.0f}<extra>4 Pilares completos</extra>',
+                ))
+
+                _secs = np.asarray((_idx - EVO_INICIO).total_seconds())
+                _frac = np.clip(_secs / (EVO_FIN_PLAN - EVO_INICIO).total_seconds(), 0, 1)
+                _y_pace = (_total_evo * _frac) / _div
+                _fig_evo.add_trace(go.Scatter(
+                    x=_idx, y=_y_pace, name='Pace esperado',
+                    mode='lines', line=dict(width=2, color='#E41395', dash='dash'),
+                    hovertemplate='%{x|%d-%m-%Y}<br>%{y:.0f}<extra>Pace esperado</extra>',
+                ))
+
+                # Línea vertical en HOY
+                _fig_evo.add_shape(
+                    type='line', xref='x', yref='paper',
+                    x0=_hoy_evo, x1=_hoy_evo, y0=0, y1=1,
+                    line=dict(color='gray', width=1.5, dash='dot'),
+                )
+                _fig_evo.add_annotation(
+                    x=_hoy_evo, y=1, xref='x', yref='paper',
+                    text='Hoy', showarrow=False,
+                    xanchor='left', yanchor='bottom', font=dict(color='gray', size=11),
+                )
+
+                _fig_evo.update_layout(
+                    xaxis_title='Fecha',
+                    yaxis_title='% del plan' if _ver_pct else 'CTs acumulados',
+                    plot_bgcolor='white', paper_bgcolor='white',
+                    legend=dict(orientation='h', yanchor='bottom', y=1.02, x=0),
+                    height=460, margin=dict(l=10, r=20, t=30, b=40),
+                    hovermode='x unified',
+                )
+                st.plotly_chart(_fig_evo, use_container_width=True)
+                st.caption(
+                    f"📌 **Meta 5 hoy (real, con Seguimiento): {_meta5_real:,} CTs** "
+                    f"({_meta5_real / _total_evo * 100:.1f}% del plan). Sin serie temporal."
+                )
 
             st.divider()
 
@@ -1520,44 +1401,67 @@ if df_raw is not None:
             st.markdown("#### 🧱 Avance por Pilar")
             cols_p = [c for c in COLS_PILAR if c in df_seg.columns]
 
-            def _tabla_pilar(df_subset, cols_p):
-                pilar_data = []
+            def _pilar_lbl(col):
+                """Etiqueta corta del pilar para encabezado de columna."""
+                return (col.replace('Pilar ', 'P').replace(' - ', ': ')
+                           .replace(' Cap Pract', ' Cap').replace(' Caract', ''))
+
+            def _tabla_pilar(df_subset, cols_p, valor='n'):
+                """Pivot NUMÉRICO por ergónomo (ordenable correctamente al hacer clic).
+                valor='n'   -> N° de actividades por pilar
+                valor='pct' -> % sobre el total de CTs del profesional"""
+                filas = []
                 for ergo, grp in df_subset.groupby('Ergonomo'):
                     total = len(grp)
+                    fila = {'Ergónomo': ergo, 'CTs': total}
                     for col in cols_p:
                         n = int(grp[col].sum()) if col in grp.columns else 0
-                        pilar_data.append({
-                            'Ergónomo': ergo,
-                            'Pilar': col.replace('Pilar ', 'P').replace(' - ', ': ')
-                                        .replace(' Cap Pract', ' Cap').replace(' Caract', ''),
-                            'N (%)': f"{n} ({round(n / total * 100, 1) if total > 0 else 0.0}%)"
-                        })
-                if not pilar_data:
-                    return pd.DataFrame()
-                return (pd.DataFrame(pilar_data)
-                        .pivot(index='Ergónomo', columns='Pilar', values='N (%)')
-                        .reset_index())
+                        fila[_pilar_lbl(col)] = (
+                            round(n / total * 100, 1) if (valor == 'pct' and total > 0)
+                            else (0.0 if valor == 'pct' else n)
+                        )
+                    filas.append(fila)
+                return pd.DataFrame(filas) if filas else pd.DataFrame()
 
             if cols_p and not df_seg.empty:
+                _modo_val = st.radio(
+                    "Mostrar:",
+                    ["N° de actividades", "% del total del profesional"],
+                    horizontal=True, key="pilar_modo",
+                )
+                _valor = 'pct' if _modo_val.startswith('%') else 'n'
+                _pilar_lbls = [_pilar_lbl(c) for c in cols_p]
+                _fmt_col = "%.1f%%" if _valor == 'pct' else "%d"
+                _colcfg = {
+                    c: st.column_config.NumberColumn(c, format=_fmt_col) for c in _pilar_lbls
+                }
+
+                def _render_pilar(df_subset, titulo):
+                    st.markdown(titulo)
+                    _t = _tabla_pilar(df_subset, cols_p, valor=_valor)
+                    if _t.empty:
+                        st.caption("Sin datos.")
+                        return
+                    # Orden por defecto: mayor a menor según el primer pilar (P1: Difusión)
+                    _sort_col = _pilar_lbls[0] if _pilar_lbls else 'CTs'
+                    _t = _t.sort_values(_sort_col, ascending=False)
+                    st.dataframe(
+                        _t, use_container_width=True, hide_index=True,
+                        column_config=_colcfg,
+                    )
+
                 if 'Es_Programado' in df_seg.columns:
                     df_prog_only = df_seg[df_seg['Es_Programado'] == True]
                     df_nopr_only = df_seg[df_seg['Es_Programado'] == False]
                 else:
                     df_prog_only, df_nopr_only = df_seg, df_seg.iloc[0:0]
 
-                st.markdown(f"**📋 Programado** — {len(df_prog_only):,} CTs")
-                _t1 = _tabla_pilar(df_prog_only, cols_p)
-                if not _t1.empty:
-                    st.dataframe(_t1, use_container_width=True, hide_index=True)
-                else:
-                    st.caption("Sin datos.")
-
-                st.markdown(f"**📋 No Programado** — {len(df_nopr_only):,} CTs")
-                _t2 = _tabla_pilar(df_nopr_only, cols_p)
-                if not _t2.empty:
-                    st.dataframe(_t2, use_container_width=True, hide_index=True)
-                else:
-                    st.caption("Sin datos.")
+                st.caption(
+                    "Ordenado de mayor a menor por P1: Difusión. Haz clic en cualquier "
+                    "encabezado para reordenar (ahora ordena por número, no por texto)."
+                )
+                _render_pilar(df_prog_only, f"**📋 Programado** — {len(df_prog_only):,} CTs")
+                _render_pilar(df_nopr_only, f"**📋 No Programado** — {len(df_nopr_only):,} CTs")
             else:
                 st.info("No hay columnas de pilares disponibles en los datos.")
 
