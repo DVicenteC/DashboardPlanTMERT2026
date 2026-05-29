@@ -5,12 +5,13 @@ Autor: Diego Vicente Contreras y Claude AI - IST 2026
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import duckdb
 import re
 import io
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ── 1. CONFIGURACIÓN DE PÁGINA ───────────────────────────────────────────────
 st.set_page_config(
@@ -431,6 +432,53 @@ def grafico_top_ergonomos(df):
     fig.update_layout(yaxis={'categoryorder': 'total ascending'})
     return fig
 
+# ── 6b. EVOLUCIÓN TEMPORAL (reconstrucción por fechas reales) ─────────────────
+# Mapeo pilar -> columna de fecha real de ejecución en SIGECO.
+# OJO: el Pilar 5 (Seguimiento) NO tiene fecha en SIGECO (solo el estado
+# 'Seguimiento 1/2'), por eso no aparece aquí y Meta 5 se aproxima por la
+# fecha del último de estos 4 pilares.
+PILAR_FECHA_REAL = {
+    'Pilar 1 - Difusión':            'Fecha AT Difusión (real)',
+    'Pilar 2 - Capacitación':        'Fecha AT Capacitación (real)',
+    'Pilar 3 - Diseño Cap Pract':    'Fecha Diseño Cap Práctica (real)',
+    'Pilar 4 - Prescripción Caract': 'Fecha Prescripción Caracterización (real)',
+}
+
+# Etiqueta corta para leyendas/tablas
+PILAR_LABEL_CORTO = {
+    'Pilar 1 - Difusión':            'P1 Difusión',
+    'Pilar 2 - Capacitación':        'P2 Capacitación',
+    'Pilar 3 - Diseño Cap Pract':    'P3 Diseño Cap.',
+    'Pilar 4 - Prescripción Caract': 'P4 Prescripción',
+}
+
+# Inicio y fin del horizonte del plan (24 meses)
+EVO_INICIO = pd.Timestamp('2025-01-01')
+EVO_FIN_PLAN = pd.Timestamp('2026-12-31')
+
+
+def serie_acumulada(fechas, idx):
+    """Conteo acumulado: cuántas fechas son <= a cada punto del índice idx.
+    Es el 'histograma acumulado' — una curva que solo sube."""
+    s = pd.to_datetime(pd.Series(fechas), errors='coerce').dropna().sort_values()
+    if s.empty:
+        return np.zeros(len(idx), dtype=int)
+    return np.searchsorted(s.values, np.asarray(idx.values), side='right')
+
+
+def meta5_fecha_aprox(df_seg):
+    """Fecha aproximada en que cada CT alcanzó Meta 5 = fecha del ÚLTIMO de los
+    4 pilares fechados, restringido a CTs que HOY tienen 'Meta 5 Cumplida'.
+    Devuelve una serie de fechas (NaT donde no aplica)."""
+    cols = [c for c in PILAR_FECHA_REAL.values() if c in df_seg.columns]
+    if not cols or 'Meta 5 Cumplida' not in df_seg.columns:
+        return pd.Series(pd.NaT, index=df_seg.index)
+    fechas = df_seg[cols].apply(pd.to_datetime, errors='coerce')
+    ult = fechas.max(axis=1)  # el pilar más tardío
+    # Solo para los que efectivamente cumplen Meta 5 hoy
+    return ult.where(df_seg['Meta 5 Cumplida'] == True, other=pd.NaT)
+
+
 # ── 6. FUNCIÓN PARETO EP ──────────────────────────────────────────────────────
 def grafico_pareto(df_ep, columna, titulo, separador_secundario=","):
     """
@@ -831,9 +879,10 @@ if df_raw is not None:
         "📊 Programación",
         "🔍 Análisis de Denuncias EP",
         "✅ Estado Seguimiento",
+        "📈 Evolución",
         "👨‍⚕️ Indicadores por Profesional",
     ])
-    tab1, tab2, tab_seg, tab_ind = tabs
+    tab1, tab2, tab_seg, tab_evo, tab_ind = tabs
 
     # ── TAB 1: PROGRAMACIÓN ───────────────────────────────────────────────────
     with tab1:
@@ -944,6 +993,177 @@ if df_raw is not None:
                 mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                 key='download_seg'
             )
+
+    # ── TAB: EVOLUCIÓN TEMPORAL ───────────────────────────────────────────────
+    with tab_evo:
+        if df_seg.empty:
+            st.info("ℹ️ Se requiere data de seguimiento para reconstruir la evolución.")
+        else:
+            st.subheader("📈 Evolución del Cumplimiento en el Tiempo")
+            st.caption(
+                "Reconstruido a partir de las **fechas reales de ejecución** de cada pilar "
+                "registradas en SIGECO. Permite responder *¿cómo estábamos en cualquier fecha?* "
+                "con resolución diaria, hacia atrás hasta enero 2025."
+            )
+            st.info(
+                "⚠️ **Meta 5 es aproximada**: el Pilar 5 (Seguimiento) no tiene fecha en SIGECO "
+                "(solo el estado *Seguimiento 1/2*). Por eso Meta 5 se ubica en la fecha del "
+                "**último de los 4 pilares fechados**, contando solo los CTs que hoy cumplen Meta 5. "
+                "Los pilares 1–4 sí son exactos. La curva respeta los filtros del panel lateral."
+            )
+
+            cols_fecha_pilar = {p: c for p, c in PILAR_FECHA_REAL.items() if c in df_seg.columns}
+            total_plan_evo = len(df_seg)
+
+            if not cols_fecha_pilar or total_plan_evo == 0:
+                st.warning("No hay columnas de fecha real de pilares en los datos de seguimiento.")
+            else:
+                _m5_fecha = meta5_fecha_aprox(df_seg)
+
+                # ── 1. Selector de fecha ───────────────────────────────────────
+                _hoy_evo = pd.Timestamp.today().normalize()
+                cs1, cs2 = st.columns([2, 3])
+                with cs1:
+                    _fecha_sel = st.date_input(
+                        "📅 Ver estado a la fecha:",
+                        value=_hoy_evo.date(),
+                        min_value=EVO_INICIO.date(),
+                        max_value=_hoy_evo.date(),
+                        format="DD-MM-YYYY",
+                    )
+                _t_sel = pd.Timestamp(_fecha_sel)
+                _t_2sem = _t_sel - timedelta(days=14)
+                _t_1mes = _t_sel - timedelta(days=30)
+
+                # Conteo de cumplidos a una fecha dada (pilares + Meta 5)
+                def _cumplidos_a(t):
+                    res = {}
+                    for _p, _c in cols_fecha_pilar.items():
+                        _f = pd.to_datetime(df_seg[_c], errors='coerce')
+                        res[_p] = int((_f <= t).sum())
+                    res['Meta 5'] = int((_m5_fecha <= t).sum())
+                    return res
+
+                _hoy_cnt  = _cumplidos_a(_t_sel)
+                _2sem_cnt = _cumplidos_a(_t_2sem)
+                _1mes_cnt = _cumplidos_a(_t_1mes)
+
+                # ── 2. Tarjetas Meta 5 con deltas ──────────────────────────────
+                st.markdown(f"#### 🎯 Meta 5 al **{_t_sel.strftime('%d-%m-%Y')}** (aprox.)")
+                _m5_hoy  = _hoy_cnt['Meta 5']
+                _m5_2sem = _2sem_cnt['Meta 5']
+                _m5_1mes = _1mes_cnt['Meta 5']
+                _pct_m5  = (_m5_hoy / total_plan_evo * 100) if total_plan_evo else 0
+                mc1, mc2, mc3 = st.columns(3)
+                mc1.metric(
+                    "Meta 5 a la fecha",
+                    f"{_m5_hoy:,}",
+                    f"{_pct_m5:.1f}% del plan ({total_plan_evo:,} CTs)",
+                    delta_color="off",
+                )
+                mc2.metric(
+                    "vs. hace 2 semanas",
+                    f"{_m5_hoy:,}",
+                    f"{_m5_hoy - _m5_2sem:+,} CTs",
+                )
+                mc3.metric(
+                    "vs. hace 1 mes",
+                    f"{_m5_hoy:,}",
+                    f"{_m5_hoy - _m5_1mes:+,} CTs",
+                )
+
+                st.divider()
+
+                # ── 3. Foto por pilar a la fecha (con deltas) ──────────────────
+                st.markdown("#### 🧱 Foto por Pilar a la Fecha Seleccionada")
+                _filas = []
+                for _p in list(cols_fecha_pilar.keys()) + ['Meta 5']:
+                    _lbl = PILAR_LABEL_CORTO.get(_p, _p)
+                    _n = _hoy_cnt[_p]
+                    _filas.append({
+                        'Pilar': _lbl,
+                        'Cumplidos a la fecha': _n,
+                        '% del plan': round(_n / total_plan_evo * 100, 1) if total_plan_evo else 0.0,
+                        'Hace 2 sem': _2sem_cnt[_p],
+                        'Δ 2 sem': _n - _2sem_cnt[_p],
+                        'Hace 1 mes': _1mes_cnt[_p],
+                        'Δ 1 mes': _n - _1mes_cnt[_p],
+                    })
+                _df_foto = pd.DataFrame(_filas)
+                st.dataframe(
+                    _df_foto.style.map(
+                        lambda v: 'color:#2e7d32;font-weight:bold' if isinstance(v, (int, float)) and v > 0
+                        else ('color:#c62828;font-weight:bold' if isinstance(v, (int, float)) and v < 0 else ''),
+                        subset=['Δ 2 sem', 'Δ 1 mes'],
+                    ).format({'% del plan': '{:.1f}%'}),
+                    use_container_width=True, hide_index=True,
+                )
+
+                st.divider()
+
+                # ── 4. Curva de avance acumulado + pace ────────────────────────
+                st.markdown("#### 📈 Curva de Avance Acumulado vs. Pace Esperado")
+                _ver_pct = st.toggle("Ver en % del plan", value=False, key="evo_pct")
+
+                _idx = pd.date_range(EVO_INICIO, _hoy_evo, freq='D')
+                _div = (total_plan_evo / 100.0) if (_ver_pct and total_plan_evo) else 1.0
+
+                _colores_p = {
+                    'Pilar 1 - Difusión':            '#7B2D8B',
+                    'Pilar 2 - Capacitación':        '#E67E22',
+                    'Pilar 3 - Diseño Cap Pract':    '#1A936F',
+                    'Pilar 4 - Prescripción Caract': '#2E86AB',
+                }
+
+                _fig_evo = go.Figure()
+
+                # Pilares 1-4 (exactos)
+                for _p, _c in cols_fecha_pilar.items():
+                    _y = serie_acumulada(df_seg[_c], _idx) / _div
+                    _fig_evo.add_trace(go.Scatter(
+                        x=_idx, y=_y, name=PILAR_LABEL_CORTO.get(_p, _p),
+                        mode='lines', line=dict(width=1.8, color=_colores_p.get(_p)),
+                        hovertemplate='%{x|%d-%m-%Y}<br>%{y:.0f}<extra>' + PILAR_LABEL_CORTO.get(_p, _p) + '</extra>',
+                    ))
+
+                # Meta 5 (aproximada) — línea gruesa púrpura institucional
+                _y_m5 = serie_acumulada(_m5_fecha, _idx) / _div
+                _fig_evo.add_trace(go.Scatter(
+                    x=_idx, y=_y_m5, name='Meta 5 (aprox.)',
+                    mode='lines', line=dict(width=3.2, color='#4F0B7B'),
+                    hovertemplate='%{x|%d-%m-%Y}<br>%{y:.0f}<extra>Meta 5 (aprox.)</extra>',
+                ))
+
+                # Pace esperado: lineal 0 -> total_plan entre Ene-2025 y Dic-2026
+                _frac = ((_idx - EVO_INICIO) / (EVO_FIN_PLAN - EVO_INICIO)).clip(0, 1)
+                _y_pace = (total_plan_evo * _frac) / _div
+                _fig_evo.add_trace(go.Scatter(
+                    x=_idx, y=_y_pace, name='Pace esperado',
+                    mode='lines', line=dict(width=2, color='#E41395', dash='dash'),
+                    hovertemplate='%{x|%d-%m-%Y}<br>%{y:.0f}<extra>Pace esperado</extra>',
+                ))
+
+                # Línea vertical en la fecha seleccionada
+                _fig_evo.add_shape(
+                    type='line', xref='x', yref='paper',
+                    x0=_t_sel, x1=_t_sel, y0=0, y1=1,
+                    line=dict(color='gray', width=1.5, dash='dot'),
+                )
+                _fig_evo.add_annotation(
+                    x=_t_sel, y=1, xref='x', yref='paper',
+                    text=_t_sel.strftime('%d-%m-%Y'), showarrow=False,
+                    xanchor='left', yanchor='bottom', font=dict(color='gray', size=11),
+                )
+
+                _fig_evo.update_layout(
+                    xaxis_title='Fecha',
+                    yaxis_title='% del plan' if _ver_pct else 'CTs acumulados',
+                    plot_bgcolor='white', paper_bgcolor='white',
+                    legend=dict(orientation='h', yanchor='bottom', y=1.02, x=0),
+                    height=460, margin=dict(l=10, r=20, t=30, b=40),
+                    hovermode='x unified',
+                )
+                st.plotly_chart(_fig_evo, use_container_width=True)
 
     # ── TAB: INDICADORES POR PROFESIONAL ─────────────────────────────────────
     with tab_ind:
