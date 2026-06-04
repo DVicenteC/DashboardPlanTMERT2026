@@ -677,6 +677,30 @@ def mostrar_resumen_detallado(df_filtrado, seccion='tab1'):
         key=f'download_btn_{seccion}'
     )
 
+# ── 6d. TAREA 3: DUEÑO DE LA ASESORÍA EN NO-PROGRAMADOS ──────────────────────
+def rellenar_dueno_noprog(df):
+    """En CTs no programados (Es_Programado == False) sin Ergónomo asignado,
+    atribuye la asesoría al 'Último Profesional Registra (sigeco)'. Si tampoco
+    hay último profesional, queda 'Sin asignar' (nadie atendió). Solo visual:
+    no toca los programados (esos conservan el Ergónomo del plan)."""
+    if df is None or df.empty:
+        return df
+    if not {'Ergonomo', 'Es_Programado'}.issubset(df.columns):
+        return df
+    df = df.copy()
+    _vacios = ['', 'nan', 'None']
+    _noprog = df['Es_Programado'] == False
+    # 1. Rellenar con el último profesional que registró en SIGECO
+    if 'Último Profesional Registra (sigeco)' in df.columns:
+        _vacio = df['Ergonomo'].isna() | df['Ergonomo'].astype(str).str.strip().isin(_vacios)
+        _mask = _vacio & _noprog
+        df.loc[_mask, 'Ergonomo'] = df.loc[_mask, 'Último Profesional Registra (sigeco)']
+    # 2. Lo que quede vacío en no programados → 'Sin asignar'
+    _vacio2 = df['Ergonomo'].isna() | df['Ergonomo'].astype(str).str.strip().isin(_vacios)
+    df.loc[_vacio2 & _noprog, 'Ergonomo'] = 'Sin asignar'
+    return df
+
+
 # ── 7. INTERFAZ PRINCIPAL ─────────────────────────────────────────────────────
 df_raw = load_data()
 df_seg_raw = cargar_datos_seguimiento_tmert()
@@ -688,6 +712,7 @@ if df_raw is not None:
     st.sidebar.title("🔍 Filtros de Gestión")
 
     solo_ep = st.sidebar.toggle("🚨 Ver solo centros con denuncias de EP", value=False)
+    solo_activos = st.sidebar.toggle("🟢 Ver solo centros de trabajo activos", value=False)
 
     # Base: dataset de referencia (el toggle EP actúa como pre-filtro crítico)
     _base_t = df_raw[df_raw['Tiene EP'] == True].copy() if solo_ep else df_raw.copy()
@@ -815,6 +840,8 @@ if df_raw is not None:
 
     # Aplicar los mismos filtros sobre df_seg (fuente separada)
     df_seg = df_seg_raw.copy() if not df_seg_raw.empty else pd.DataFrame()
+    # Tarea 3: dueño de la asesoría en no programados (Ergónomo vacío → Último Profesional)
+    df_seg = rellenar_dueno_noprog(df_seg)
     # Filtro EP: el seguimiento NO tiene 'folios' (esa columna vive sólo en df_raw/plan).
     # Por eso cruzamos por ID-CT contra los CTs marcados como Tiene EP en el plan.
     if solo_ep and not df_seg.empty and 'ID-CT' in df_seg.columns \
@@ -837,6 +864,10 @@ if df_raw is not None:
             df_seg = df_seg[df_seg['Nombre Empleador'] == filtro_empleador]
         if filtro_reg != "Todas" and 'Región' in df_seg.columns:
             df_seg = df_seg[df_seg['Región'] == filtro_reg]
+
+    # Tarea 1: filtro "solo centros de trabajo activos" (Estado Centro de Trabajo == 'Si')
+    if solo_activos and not df_seg.empty and 'Estado Centro de Trabajo' in df_seg.columns:
+        df_seg = df_seg[df_seg['Estado Centro de Trabajo'].astype(str).str.strip() == 'Si']
 
     # df_prog: registros con fecha programada (para tab Programación)
     df_prog = df[df['fecha'].notna()].copy()
@@ -964,6 +995,7 @@ if df_raw is not None:
 
             cols_s = [
                 'Región', 'Ergonomo', 'Nombre Empleador', 'ID-CT', 'Nombre CT', 'Dirección CT', 'Comuna CT',
+                'Estado Centro de Trabajo',
                 'Estado AT',
                 'Meta 5 Cumplida',
                 'Pilar 1 - Difusión',
@@ -1057,6 +1089,12 @@ if df_raw is not None:
                     ind['Aporte %'] = (ind['Con alguna AT'] / _tot_at * 100).round(1)
                 else:
                     ind['Aporte %'] = 0.0
+                # Aporte Meta 5 %: contribución del profesional sobre el total de Meta 5 del equipo
+                _tot_meta5 = int(ind['Meta 5'].sum())
+                if _tot_meta5 > 0:
+                    ind['Aporte Meta 5 %'] = (ind['Meta 5'] / _tot_meta5 * 100).round(1)
+                else:
+                    ind['Aporte Meta 5 %'] = 0.0
                 return ind
 
             # IDs con denuncia EP: desde df_raw (plan base, siempre tiene folios).
@@ -1074,6 +1112,8 @@ if df_raw is not None:
                 _df_ind_total['_ID_NORM'] = (
                     _df_ind_total['ID-CT'].astype(str).str.upper().str.strip()
                 )
+            # Tarea 3: dueño de la asesoría en no programados (antes de filtrar/agrupar)
+            _df_ind_total = rellenar_dueno_noprog(_df_ind_total)
             if not _df_ind_total.empty:
                 for _k, _col_f, _all_v in _defs_t:
                     _v = st.session_state.get(_k, _all_v)
@@ -1083,6 +1123,11 @@ if df_raw is not None:
                 if solo_ep and _ep_ct_ids and '_ID_NORM' in _df_ind_total.columns:
                     _df_ind_total = _df_ind_total[
                         _df_ind_total['_ID_NORM'].isin(_ep_ct_ids)
+                    ].copy()
+                # Tarea 1: filtro "solo centros de trabajo activos"
+                if solo_activos and 'Estado Centro de Trabajo' in _df_ind_total.columns:
+                    _df_ind_total = _df_ind_total[
+                        _df_ind_total['Estado Centro de Trabajo'].astype(str).str.strip() == 'Si'
                     ].copy()
 
             # Foco EP como subconjunto (solo si solo_ep=False)
@@ -1170,6 +1215,7 @@ if df_raw is not None:
             st.info(
                 "**Columnas TOTAL**: sobre todos los CTs asignados del profesional.  \n"
                 "**Columnas EP**: solo sobre CTs con denuncias de EP.  \n"
+                "**Aporte Meta 5 %**: contribución del profesional sobre el total de Meta 5 cumplidas del equipo.  \n"
                 "**Aporte %**: contribución del profesional sobre el total de actividades realizadas (Con alguna AT) del equipo.  \n"
                 "**Esperado**: CTs que debería tener con AT según pace lineal.  \n"
                 "**vs. Pace**: realizados menos esperados (positivo = adelantado).  \n"
@@ -1179,6 +1225,7 @@ if df_raw is not None:
             _fmt = {
                 '% Inicio':          '{:.1f}%',
                 '% Meta 5':          '{:.1f}%',
+                'Aporte Meta 5 %':   '{:.1f}%',
                 '% Meta5 EP':        '{:.1f}%',
                 'vs. Promedio (pp)': '{:+.1f}',
                 'Eficiencia':        '{:.1f}%',
@@ -1194,7 +1241,7 @@ if df_raw is not None:
                 _tiene_ep = 'CTs EP' in _ind_df.columns
                 _cols = [
                     'Ergónomo',
-                    'CTs Asignados', 'Meta 5', '% Meta 5', 'Con alguna AT', '% Inicio',
+                    'CTs Asignados', 'Meta 5', '% Meta 5', 'Aporte Meta 5 %', 'Con alguna AT', '% Inicio',
                     'Aporte %', 'Eficiencia',
                 ]
                 if _tiene_ep:
