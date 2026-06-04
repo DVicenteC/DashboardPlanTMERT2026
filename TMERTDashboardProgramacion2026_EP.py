@@ -714,8 +714,27 @@ if df_raw is not None:
     solo_ep = st.sidebar.toggle("🚨 Ver solo centros con denuncias de EP", value=False)
     solo_activos = st.sidebar.toggle("🟢 Ver solo centros de trabajo activos", value=False)
 
-    # Base: dataset de referencia (el toggle EP actúa como pre-filtro crítico)
-    _base_t = df_raw[df_raw['Tiene EP'] == True].copy() if solo_ep else df_raw.copy()
+    # IDs de CT activos (Estado Centro de Trabajo == 'Si') tomados del seguimiento,
+    # para poder filtrar también la programación: df_raw NO trae esa columna, así que
+    # se cruza por ID-CT (match verificado 5.500/5.500, upper+strip sin normalización extra).
+    _activos_ids = set()
+    if solo_activos and not df_seg_raw.empty \
+            and 'Estado Centro de Trabajo' in df_seg_raw.columns and 'ID-CT' in df_seg_raw.columns:
+        _activos_ids = set(
+            df_seg_raw.loc[
+                df_seg_raw['Estado Centro de Trabajo'].astype(str).str.strip() == 'Si', 'ID-CT'
+            ].astype(str).str.upper().str.strip()
+        )
+
+    # Base: dataset de referencia (los toggles EP y "activos" actúan como pre-filtros)
+    _base_t = df_raw.copy()
+    if solo_ep and 'Tiene EP' in _base_t.columns:
+        _base_t = _base_t[_base_t['Tiene EP'] == True]
+    if solo_activos and _activos_ids and 'ID-CT' in _base_t.columns:
+        _base_t = _base_t[
+            _base_t['ID-CT'].astype(str).str.upper().str.strip().isin(_activos_ids)
+        ]
+    _base_t = _base_t.copy()
 
     # ── 1. Inicialización de session_state ────────────────────────────────────
     _defaults_t = {
