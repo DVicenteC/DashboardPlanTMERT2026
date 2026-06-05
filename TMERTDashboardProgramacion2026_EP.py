@@ -1015,6 +1015,7 @@ if df_raw is not None:
             cols_s = [
                 'Región', 'Ergonomo', 'Nombre Empleador', 'ID-CT', 'Nombre CT', 'Dirección CT', 'Comuna CT',
                 'Estado Centro de Trabajo',
+                'Es_Programado',
                 'Estado AT',
                 'Meta 5 Cumplida',
                 'Cuantas AT Tiene',
@@ -1029,16 +1030,46 @@ if df_raw is not None:
                 'Fecha AT Capacitación (real)',
                 'Fecha Prescripción Caracterización (real)',
                 'Fecha Diseño Cap Práctica (real)',
+                # Vigilancia ambiental (Identificación y Evaluación)
+                'Fecha Últ. Identificación Inicial (istprod)',
+                'Fecha Identificación Avanzada (real)',
+                'Condición Identificación Avanzada (istprod)',
+                'Prescripción Evaluación Inicial (sigeco)',
+                'Estado Seguimiento Eval Inicial (sigeco)',
+                'Fecha Prescripción Eval Avanzada (sigeco)',
             ]
             cols_s = [c for c in cols_s if c in df_seg.columns]
 
             df_det = df_seg[cols_s].copy()
             for c in df_det.columns:
-                if 'Fecha' in c:
+                if 'Fecha' in c or pd.api.types.is_datetime64_any_dtype(df_det[c]):
                     df_det[c] = pd.to_datetime(df_det[c], errors='coerce').dt.strftime('%d-%m-%Y').fillna('')
             if 'Cuantas AT Tiene' in df_det.columns:
                 df_det['Cuantas AT Tiene'] = pd.to_numeric(
                     df_det['Cuantas AT Tiene'], errors='coerce').fillna(0).astype(int)
+            # Programado / No Programado (legible)
+            if 'Es_Programado' in df_det.columns:
+                df_det['Es_Programado'] = df_det['Es_Programado'].map(
+                    {True: 'Programado', False: 'No Programado'}).fillna('')
+            # Condición de identificación avanzada → etiqueta corta
+            _cond_map_tabla = {
+                'Identificación Avanzada Condición Aceptable':  'Aceptable',
+                'Identificación Avanzada Condición Critica':    'Crítica',
+                'Identificación Avanzada Condición No Critica': 'No Crítica',
+            }
+            if 'Condición Identificación Avanzada (istprod)' in df_det.columns:
+                df_det['Condición Identificación Avanzada (istprod)'] = (
+                    df_det['Condición Identificación Avanzada (istprod)'].map(_cond_map_tabla).fillna(''))
+            # Encabezados cortos para las columnas nuevas
+            df_det = df_det.rename(columns={
+                'Es_Programado': 'Programado',
+                'Fecha Últ. Identificación Inicial (istprod)': 'Fecha Ident. Inicial',
+                'Fecha Identificación Avanzada (real)': 'Fecha Ident. Avanzada',
+                'Condición Identificación Avanzada (istprod)': 'Condición Ident. Avanzada',
+                'Prescripción Evaluación Inicial (sigeco)': 'Presc. Eval. Inicial',
+                'Estado Seguimiento Eval Inicial (sigeco)': 'Estado Seg. Eval. Inicial',
+                'Fecha Prescripción Eval Avanzada (sigeco)': 'Fecha Presc. Eval. Avanzada',
+            })
 
             st.dataframe(df_det, use_container_width=True, hide_index=True)
 
