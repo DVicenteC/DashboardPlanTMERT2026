@@ -1017,10 +1017,12 @@ if df_raw is not None:
                 'Estado Centro de Trabajo',
                 'Estado AT',
                 'Meta 5 Cumplida',
+                'Cuantas AT Tiene',
                 'Pilar 1 - Difusión',
                 'Pilar 2 - Capacitación',
                 'Pilar 3 - Diseño Cap Pract',
                 'Pilar 4 - Prescripción Caract',
+                'Pilar 5 - Seguimiento',
                 'Estado Seguimiento Prescripción Caracterización (sigeco)',
                 'Último Profesional Registra (sigeco)',
                 'Fecha AT Difusión (real)',
@@ -1034,6 +1036,9 @@ if df_raw is not None:
             for c in df_det.columns:
                 if 'Fecha' in c:
                     df_det[c] = pd.to_datetime(df_det[c], errors='coerce').dt.strftime('%d-%m-%Y').fillna('')
+            if 'Cuantas AT Tiene' in df_det.columns:
+                df_det['Cuantas AT Tiene'] = pd.to_numeric(
+                    df_det['Cuantas AT Tiene'], errors='coerce').fillna(0).astype(int)
 
             st.dataframe(df_det, use_container_width=True, hide_index=True)
 
