@@ -1170,8 +1170,16 @@ if df_raw is not None:
                     f"Filas tras filtro EP: {len(_df_ind_total)}"
                 )
 
-            # Promedio del equipo sobre el total programado (sin filtro EP)
-            ind_todos  = _build_ind(df_seg_raw, modo='programado') if not df_seg_raw.empty else pd.DataFrame()
+            # Promedio del equipo sobre el total programado (sin filtro EP).
+            # Refleja el toggle "solo CT activos" para usar el mismo universo que las
+            # grillas; NO aplica los selectores de foco (ergónomo, región…) para que el
+            # baseline siga siendo "del equipo" y vs. Promedio tenga sentido.
+            _df_prom = df_seg_raw.copy() if not df_seg_raw.empty else pd.DataFrame()
+            if solo_activos and not _df_prom.empty and 'Estado Centro de Trabajo' in _df_prom.columns:
+                _df_prom = _df_prom[
+                    _df_prom['Estado Centro de Trabajo'].astype(str).str.strip() == 'Si'
+                ]
+            ind_todos  = _build_ind(_df_prom, modo='programado') if not _df_prom.empty else pd.DataFrame()
             prom_meta5 = ind_todos['% Meta 5'].mean() if not ind_todos.empty else 0
 
             # Pace: distribuir el total de CTs en 24 meses (Ene 2025 – Dic 2026)
@@ -1219,7 +1227,8 @@ if df_raw is not None:
             # ── NIVEL 1: Tabla resumen ─────────────────────────────────────
             st.markdown("#### 📋 Resumen por Profesional")
             st.caption(
-                f"Promedio del equipo: **{prom_meta5:.1f}%** Meta 5 | "
+                f"Promedio del equipo: **{prom_meta5:.1f}%** Meta 5"
+                f"{' · solo CT activos' if solo_activos else ''} | "
                 f"Pace = distribución lineal en 24 meses (Ene 2025–Dic 2026), "
                 f"mes actual = **{_months_elapsed}** de 24"
             )
