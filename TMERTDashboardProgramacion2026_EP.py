@@ -1048,6 +1048,156 @@ if df_raw is not None:
                 key='download_seg'
             )
 
+            # ── 🌡️ VIGILANCIA AMBIENTAL: IDENTIFICACIÓN Y EVALUACIÓN ──────────
+            st.divider()
+            st.markdown("#### 🌡️ Vigilancia Ambiental: Identificación y Evaluación")
+            st.caption(
+                "Flujo de identificación del riesgo TMERT y su evaluación cualitativa/cuantitativa. "
+                f"Respeta los filtros del panel lateral · universo actual: **{len(df_seg):,}** CTs."
+            )
+
+            _COND_COL = 'Condición Identificación Avanzada (istprod)'
+
+            def _cond_corta(_s):
+                """Etiqueta corta de la condición (ojo: 'No Critica' contiene 'Critica')."""
+                _s = str(_s)
+                if 'No Critica' in _s: return 'No Crítica'
+                if 'Critica'   in _s: return 'Crítica'
+                if 'Aceptable' in _s: return 'Aceptable'
+                return None
+
+            def _nn_seg(_col):
+                """Conteo de CTs con la columna no vacía dentro del universo filtrado."""
+                if _col not in df_seg.columns:
+                    return 0
+                _s = df_seg[_col].astype(str).str.strip()
+                return int((df_seg[_col].notna() & ~_s.isin(['', 'nan', 'None', 'NaT'])).sum())
+
+            _N_vig = len(df_seg)
+            _etapas = [
+                ('Identificación Inicial',     'Fecha Últ. Identificación Inicial (istprod)'),
+                ('Identificación Avanzada',    'Fecha Identificación Avanzada (real)'),
+                ('Presc. Evaluación Inicial',  'Prescripción Evaluación Inicial (sigeco)'),
+                ('Presc. Evaluación Avanzada', 'Fecha Prescripción Eval Avanzada (sigeco)'),
+            ]
+            _cov = pd.DataFrame([(lbl, _nn_seg(c)) for lbl, c in _etapas],
+                                columns=['Etapa', 'CTs'])
+
+            _cvz1, _cvz2 = st.columns([3, 2])
+            with _cvz1:
+                st.markdown("**Cobertura por etapa**")
+                _fig_cov = px.bar(_cov, x='CTs', y='Etapa', orientation='h', text='CTs',
+                                  color_discrete_sequence=['#2E86AB'], height=300)
+                _fig_cov.update_layout(
+                    yaxis={'categoryorder': 'array',
+                           'categoryarray': _cov['Etapa'].tolist()[::-1]},
+                    margin=dict(l=0, t=10, b=0), xaxis_title='CTs', yaxis_title=''
+                )
+                _fig_cov.update_traces(textposition='outside')
+                st.plotly_chart(_fig_cov, use_container_width=True)
+                st.caption(" · ".join(f"{lbl}: **{n}** de {_N_vig:,}"
+                                      for lbl, n in zip(_cov['Etapa'], _cov['CTs'])))
+            with _cvz2:
+                st.markdown("**Condición (Ident. Avanzada)**")
+                if _COND_COL in df_seg.columns:
+                    _cc = df_seg[_COND_COL].map(_cond_corta).dropna()
+                    if not _cc.empty:
+                        _cnt = (_cc.value_counts()
+                                   .rename_axis('Condición').reset_index(name='CTs'))
+                        _fig_pie = px.pie(
+                            _cnt, names='Condición', values='CTs', hole=0.45,
+                            color='Condición',
+                            color_discrete_map={'Aceptable': '#1A936F',
+                                                'No Crítica': '#E67E22',
+                                                'Crítica': '#C0392B'},
+                            height=300)
+                        _fig_pie.update_traces(textinfo='value+percent')
+                        _fig_pie.update_layout(margin=dict(t=10, b=0, l=0, r=0),
+                                               legend=dict(orientation='h', y=-0.15))
+                        st.plotly_chart(_fig_pie, use_container_width=True)
+                    else:
+                        st.info("Sin datos de condición en el filtro actual.")
+                else:
+                    st.info("Columna de condición no disponible.")
+
+            # ── Alertas de plazo (Protocolo TMERT) ──
+            if _COND_COL in df_seg.columns:
+                _hoy_vig = pd.Timestamp.today().normalize()
+                _dfc = df_seg.copy()
+                _dfc['_cond'] = _dfc[_COND_COL].map(_cond_corta)
+                _fa = pd.to_datetime(_dfc.get('Fecha Identificación Avanzada (real)'), errors='coerce')
+                _fi = pd.to_datetime(_dfc.get('Fecha Últ. Identificación Inicial (istprod)'), errors='coerce')
+
+                # Críticas: máx 90 días desde la evaluación cualitativa (Ident. Avanzada)
+                _cri = _dfc[_dfc['_cond'] == 'Crítica'].copy()
+                _dias = (_hoy_vig - _fa.reindex(_cri.index)).dt.days
+                _cri['Días desde eval. cualitativa'] = _dias
+                _venc = int((_dias > 90).sum())
+                _enpz = int(((_dias >= 0) & (_dias <= 90)).sum())
+                _pend = int(_dias.isna().sum())
+
+                st.markdown(
+                    "**🔴 Críticas — intervención en máx. 90 días desde la evaluación "
+                    "cualitativa (Identificación Avanzada) · Protocolo TMERT**"
+                )
+                _m1, _m2, _m3 = st.columns(3)
+                _m1.metric("Críticas", f"{len(_cri):,}")
+                _m2.metric("Vencidas (>90 días)", f"{_venc:,}", delta_color="inverse")
+                _m3.metric("En plazo / pendientes", f"{_enpz} / {_pend}")
+
+                if not _cri.empty:
+                    _presc_ok = (
+                        pd.to_datetime(_dfc.get('Prescripción Evaluación Inicial (sigeco)'), errors='coerce').notna()
+                        | pd.to_datetime(_dfc.get('Prescripción Evaluación Inicial (istprod)'), errors='coerce').notna()
+                        | pd.to_datetime(_dfc.get('Fecha Prescripción Eval Avanzada (sigeco)'), errors='coerce').notna()
+                    )
+                    _cri['Estado plazo'] = _cri['Días desde eval. cualitativa'].map(
+                        lambda d: 'Pendiente eval.' if pd.isna(d)
+                        else ('Vencida' if d > 90 else 'En plazo'))
+                    _cri['¿Ya con Presc. Evaluación?'] = _presc_ok.reindex(_cri.index).map(
+                        {True: 'Sí', False: 'No'})
+                    _cri_disp = _cri.copy()
+                    _cri_disp['Fecha Ident. Avanzada'] = _fa.reindex(_cri.index).dt.strftime('%d-%m-%Y').fillna('')
+                    _cols_cri = [c for c in [
+                        'Ergonomo', 'Nombre Empleador', 'Nombre CT', 'Región',
+                        'Fecha Ident. Avanzada', 'Días desde eval. cualitativa',
+                        'Estado plazo', '¿Ya con Presc. Evaluación?'
+                    ] if c in _cri_disp.columns]
+                    _cri_disp = _cri_disp[_cols_cri].sort_values(
+                        'Días desde eval. cualitativa', ascending=False, na_position='first')
+
+                    def _hl_venc(row):
+                        _v = row.get('Estado plazo') == 'Vencida'
+                        return ['background-color: #fdecea' if _v else ''] * len(row)
+
+                    st.dataframe(_cri_disp.style.apply(_hl_venc, axis=1),
+                                 use_container_width=True, hide_index=True)
+                    _buf_cri = io.BytesIO()
+                    with pd.ExcelWriter(_buf_cri, engine='openpyxl') as _w:
+                        _cri_disp.to_excel(_w, index=False, sheet_name='Criticas_TMERT')
+                    st.download_button(
+                        "📥 Descargar Críticas en Excel", data=_buf_cri.getvalue(),
+                        file_name=f'criticas_tmert_{datetime.now().strftime("%d-%m-%Y")}.xlsx',
+                        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        key='download_criticas')
+
+                # Aceptables: vigencia 36 meses desde la Identificación Inicial
+                _ace = _dfc[_dfc['_cond'] == 'Aceptable']
+                _meses_a = (_hoy_vig - _fi.reindex(_ace.index)).dt.days / 30.44
+                _vig_venc = int((_meses_a > 36).sum())
+                _vig_con = int(_fi.reindex(_ace.index).notna().sum())
+                st.markdown(
+                    "**🟢 Aceptables — vigencia de la identificación: 36 meses desde la "
+                    "Identificación Inicial**"
+                )
+                _a1, _a2, _a3 = st.columns(3)
+                _a1.metric("Aceptables", f"{len(_ace):,}")
+                _a2.metric("Vencidas (>36 meses)", f"{_vig_venc:,}", delta_color="inverse")
+                _a3.metric("Con fecha de identificación", f"{_vig_con:,}")
+                if _vig_con > 0 and _vig_venc == 0:
+                    st.caption("Ninguna identificación «Aceptable» supera los 36 meses "
+                               "(datos 2025–2026; todas vigentes a la fecha).")
+
     # ── TAB: EVOLUCIÓN E INDICADORES POR PROFESIONAL ──────────────────────────
     with tab_ind:
         if df_seg.empty:
