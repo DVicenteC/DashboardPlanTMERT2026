@@ -714,7 +714,7 @@ if df_raw is not None:
     solo_ep = st.sidebar.toggle("🚨 Ver solo centros con denuncias de EP", value=False)
     solo_activos = st.sidebar.toggle("🟢 Ver solo centros de trabajo activos", value=False)
 
-    # IDs de CT activos (Estado Centro de Trabajo == 'Si') tomados del seguimiento,
+    # IDs de CT activos (Estado Centro de Trabajo == 'Activa') tomados del seguimiento,
     # para poder filtrar también la programación: df_raw NO trae esa columna, así que
     # se cruza por ID-CT (match verificado 5.500/5.500, upper+strip sin normalización extra).
     _activos_ids = set()
@@ -722,7 +722,7 @@ if df_raw is not None:
             and 'Estado Centro de Trabajo' in df_seg_raw.columns and 'ID-CT' in df_seg_raw.columns:
         _activos_ids = set(
             df_seg_raw.loc[
-                df_seg_raw['Estado Centro de Trabajo'].astype(str).str.strip() == 'Si', 'ID-CT'
+                df_seg_raw['Estado Centro de Trabajo'].astype(str).str.strip() == 'Activa', 'ID-CT'
             ].astype(str).str.upper().str.strip()
         )
 
@@ -884,9 +884,9 @@ if df_raw is not None:
         if filtro_reg != "Todas" and 'Región' in df_seg.columns:
             df_seg = df_seg[df_seg['Región'] == filtro_reg]
 
-    # Tarea 1: filtro "solo centros de trabajo activos" (Estado Centro de Trabajo == 'Si')
+    # Tarea 1: filtro "solo centros de trabajo activos" (Estado Centro de Trabajo == 'Activa')
     if solo_activos and not df_seg.empty and 'Estado Centro de Trabajo' in df_seg.columns:
-        df_seg = df_seg[df_seg['Estado Centro de Trabajo'].astype(str).str.strip() == 'Si']
+        df_seg = df_seg[df_seg['Estado Centro de Trabajo'].astype(str).str.strip() == 'Activa']
 
     # df_prog: registros con fecha programada (para tab Programación)
     df_prog = df[df['fecha'].notna()].copy()
@@ -1332,7 +1332,7 @@ if df_raw is not None:
                 # Tarea 1: filtro "solo centros de trabajo activos"
                 if solo_activos and 'Estado Centro de Trabajo' in _df_ind_total.columns:
                     _df_ind_total = _df_ind_total[
-                        _df_ind_total['Estado Centro de Trabajo'].astype(str).str.strip() == 'Si'
+                        _df_ind_total['Estado Centro de Trabajo'].astype(str).str.strip() == 'Activa'
                     ].copy()
 
             # Foco EP como subconjunto (solo si solo_ep=False)
@@ -1363,7 +1363,7 @@ if df_raw is not None:
             _df_prom = df_seg_raw.copy() if not df_seg_raw.empty else pd.DataFrame()
             if solo_activos and not _df_prom.empty and 'Estado Centro de Trabajo' in _df_prom.columns:
                 _df_prom = _df_prom[
-                    _df_prom['Estado Centro de Trabajo'].astype(str).str.strip() == 'Si'
+                    _df_prom['Estado Centro de Trabajo'].astype(str).str.strip() == 'Activa'
                 ]
             ind_todos  = _build_ind(_df_prom, modo='programado') if not _df_prom.empty else pd.DataFrame()
             prom_meta5 = ind_todos['% Meta 5'].mean() if not ind_todos.empty else 0
