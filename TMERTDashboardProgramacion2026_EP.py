@@ -142,6 +142,19 @@ def normalizar_columnas_tmert(df):
     }
     return df.rename(columns=mapeo_columnas)
 
+# Vocabulario de "centro de trabajo activo" en 'Estado Centro de Trabajo'.
+# El maestro de adherentes informa 'Si' (columna Est Sucursal); versiones previas
+# usaban 'Activa'. El resto de los valores (Cerrada, Pasiva, Anulada, Desafiliada)
+# son NO activos. Se aceptan ambos vocabularios para no romper el filtro si la
+# fuente cambia de nuevo.
+CT_ACTIVO_VALORES = {'SI', 'SÍ', 'ACTIVA', 'ACTIVO', 'S'}
+
+
+def es_ct_activo(serie):
+    """Máscara booleana de centros de trabajo activos, tolerante al vocabulario."""
+    return serie.astype(str).str.strip().str.upper().isin(CT_ACTIVO_VALORES)
+
+
 def parsear_fecha_flexible(serie):
     """
     Parsea una serie de fechas que puede tener formatos mixtos:
@@ -434,9 +447,9 @@ def grafico_top_ergonomos(df):
 
 # ── 6b. EVOLUCIÓN TEMPORAL (reconstrucción por fechas reales) ─────────────────
 # Mapeo pilar -> columna de fecha real de ejecución en SIGECO.
-# OJO: el Pilar 5 (Seguimiento) NO tiene fecha en SIGECO (solo el estado
-# 'Seguimiento 1/2'), por eso no aparece aquí y Meta 5 se aproxima por la
-# fecha del último de estos 4 pilares.
+# El Pilar 5 (Seguimiento) ahora SÍ tiene fecha: el reporte base incorporó
+# 'FECHA SEGUIMIENTO PRESCRIPCION 1/2' y el procesador consolida la más temprana
+# de las dos (basta cualquiera de los dos seguimientos) en la columna de abajo.
 PILAR_FECHA_REAL = {
     'Pilar 1 - Difusión':            'Fecha AT Difusión (real)',
     'Pilar 2 - Capacitación':        'Fecha AT Capacitación (real)',
@@ -444,12 +457,15 @@ PILAR_FECHA_REAL = {
     'Pilar 4 - Prescripción Caract': 'Fecha Prescripción Caracterización (real)',
 }
 
+COL_FECHA_SEGUIMIENTO = 'Fecha Seguimiento Prescripción Caracterización (real)'
+
 # Etiqueta corta para leyendas/tablas
 PILAR_LABEL_CORTO = {
     'Pilar 1 - Difusión':            'P1 Difusión',
     'Pilar 2 - Capacitación':        'P2 Capacitación',
     'Pilar 3 - Diseño Cap Pract':    'P3 Diseño Cap.',
     'Pilar 4 - Prescripción Caract': 'P4 Prescripción',
+    'Pilar 5 - Seguimiento':         'P5 Seguimiento',
 }
 
 # Inicio y fin del horizonte del plan (24 meses)
@@ -480,6 +496,26 @@ def cuatro_pilares_fecha(df_seg):
     fechas = df_seg[cols].apply(pd.to_datetime, errors='coerce')
     todas_presentes = fechas.notna().all(axis=1)
     ult = fechas.max(axis=1)  # el pilar más tardío
+    return ult.where(todas_presentes, other=pd.NaT)
+
+
+def meta5_fecha(df_seg):
+    """Fecha EXACTA en que cada CT completó los 5 pilares = fecha del ÚLTIMO de los
+    5, exigiendo que los 5 tengan fecha (NaT donde falta alguno).
+
+    El Pilar 5 usa 'FECHA SEGUIMIENTO PRESCRIPCION 1/2' consolidada por el
+    procesador: basta cualquiera de los dos seguimientos, y se toma la más
+    temprana como fecha de cumplimiento.
+
+    Es un PISO de Meta 5: hay CTs con estado 'Seguimiento 1/2' informado pero sin
+    fecha de seguimiento, que esta curva no puede ubicar en el tiempo."""
+    cols = [c for c in PILAR_FECHA_REAL.values() if c in df_seg.columns]
+    if COL_FECHA_SEGUIMIENTO not in df_seg.columns or len(cols) < len(PILAR_FECHA_REAL):
+        return pd.Series(pd.NaT, index=df_seg.index)
+    cols = cols + [COL_FECHA_SEGUIMIENTO]
+    fechas = df_seg[cols].apply(pd.to_datetime, errors='coerce')
+    todas_presentes = fechas.notna().all(axis=1)
+    ult = fechas.max(axis=1)
     return ult.where(todas_presentes, other=pd.NaT)
 
 
@@ -714,7 +750,7 @@ if df_raw is not None:
     solo_ep = st.sidebar.toggle("🚨 Ver solo centros con denuncias de EP", value=False)
     solo_activos = st.sidebar.toggle("🟢 Ver solo centros de trabajo activos", value=False)
 
-    # IDs de CT activos (Estado Centro de Trabajo == 'Activa') tomados del seguimiento,
+    # IDs de CT activos (ver es_ct_activo / CT_ACTIVO_VALORES) tomados del seguimiento,
     # para poder filtrar también la programación: df_raw NO trae esa columna, así que
     # se cruza por ID-CT (match verificado 5.500/5.500, upper+strip sin normalización extra).
     _activos_ids = set()
@@ -722,9 +758,17 @@ if df_raw is not None:
             and 'Estado Centro de Trabajo' in df_seg_raw.columns and 'ID-CT' in df_seg_raw.columns:
         _activos_ids = set(
             df_seg_raw.loc[
-                df_seg_raw['Estado Centro de Trabajo'].astype(str).str.strip() == 'Activa', 'ID-CT'
+                es_ct_activo(df_seg_raw['Estado Centro de Trabajo']), 'ID-CT'
             ].astype(str).str.upper().str.strip()
         )
+        if not _activos_ids:
+            st.sidebar.warning(
+                "⚠️ El filtro de CT activos no encontró coincidencias en "
+                "'Estado Centro de Trabajo'. Valores presentes: "
+                + ", ".join(sorted(
+                    df_seg_raw['Estado Centro de Trabajo'].dropna().astype(str).unique()
+                )[:6])
+            )
 
     # Base: dataset de referencia (los toggles EP y "activos" actúan como pre-filtros)
     _base_t = df_raw.copy()
@@ -884,9 +928,9 @@ if df_raw is not None:
         if filtro_reg != "Todas" and 'Región' in df_seg.columns:
             df_seg = df_seg[df_seg['Región'] == filtro_reg]
 
-    # Tarea 1: filtro "solo centros de trabajo activos" (Estado Centro de Trabajo == 'Activa')
+    # Tarea 1: filtro "solo centros de trabajo activos" (ver es_ct_activo)
     if solo_activos and not df_seg.empty and 'Estado Centro de Trabajo' in df_seg.columns:
-        df_seg = df_seg[df_seg['Estado Centro de Trabajo'].astype(str).str.strip() == 'Activa']
+        df_seg = df_seg[es_ct_activo(df_seg['Estado Centro de Trabajo'])]
 
     # df_prog: registros con fecha programada (para tab Programación)
     df_prog = df[df['fecha'].notna()].copy()
@@ -1332,7 +1376,7 @@ if df_raw is not None:
                 # Tarea 1: filtro "solo centros de trabajo activos"
                 if solo_activos and 'Estado Centro de Trabajo' in _df_ind_total.columns:
                     _df_ind_total = _df_ind_total[
-                        _df_ind_total['Estado Centro de Trabajo'].astype(str).str.strip() == 'Activa'
+                        es_ct_activo(_df_ind_total['Estado Centro de Trabajo'])
                     ].copy()
 
             # Foco EP como subconjunto (solo si solo_ep=False)
@@ -1362,9 +1406,7 @@ if df_raw is not None:
             # baseline siga siendo "del equipo" y vs. Promedio tenga sentido.
             _df_prom = df_seg_raw.copy() if not df_seg_raw.empty else pd.DataFrame()
             if solo_activos and not _df_prom.empty and 'Estado Centro de Trabajo' in _df_prom.columns:
-                _df_prom = _df_prom[
-                    _df_prom['Estado Centro de Trabajo'].astype(str).str.strip() == 'Activa'
-                ]
+                _df_prom = _df_prom[es_ct_activo(_df_prom['Estado Centro de Trabajo'])]
             ind_todos  = _build_ind(_df_prom, modo='programado') if not _df_prom.empty else pd.DataFrame()
             prom_meta5 = ind_todos['% Meta 5'].mean() if not ind_todos.empty else 0
 
@@ -1489,9 +1531,11 @@ if df_raw is not None:
             st.markdown("#### 📈 Curva de Avance Acumulado vs. Pace Esperado")
             st.caption(
                 "Reconstruida con las **fechas reales de ejecución** de SIGECO (resolución diaria, "
-                "desde ene-2025). Pilares 1–4 y «4 Pilares completos» son **exactos**. La **Meta 5 "
-                "no se grafica**: exige el Seguimiento, que SIGECO no informa con fecha — "
-                "«4 Pilares completos» es su **techo**. Respeta los filtros del panel lateral."
+                "desde ene-2025). Pilares 1–5 y «4 Pilares completos» son **exactos**. El **P5 "
+                "Seguimiento** usa las fechas de seguimiento de prescripción (basta **cualquiera "
+                "de los dos** seguimientos; se toma la más temprana). La curva **Meta 5** es un "
+                "**piso**: hay CTs con seguimiento informado sin fecha, que no se pueden ubicar "
+                "en el tiempo. Respeta los filtros del panel lateral."
             )
 
             _cols_fp = {p: c for p, c in PILAR_FECHA_REAL.items() if c in df_seg.columns}
@@ -1501,6 +1545,7 @@ if df_raw is not None:
                 st.info("No hay columnas de fecha real de pilares para construir la curva.")
             else:
                 _4p_fecha = cuatro_pilares_fecha(df_seg)
+                _m5_fecha  = meta5_fecha(df_seg)
                 _meta5_real = int(df_seg['Meta 5 Cumplida'].sum()) \
                     if 'Meta 5 Cumplida' in df_seg.columns else 0
                 _hoy_evo = pd.Timestamp.today().normalize()
@@ -1525,12 +1570,30 @@ if df_raw is not None:
                         hovertemplate='%{x|%d-%m-%Y}<br>%{y:.0f}<extra>' + PILAR_LABEL_CORTO.get(_p, _p) + '</extra>',
                     ))
 
+                # P5 Seguimiento (fechas de seguimiento de prescripción)
+                if COL_FECHA_SEGUIMIENTO in df_seg.columns:
+                    _y_p5 = serie_acumulada(df_seg[COL_FECHA_SEGUIMIENTO], _idx) / _div
+                    _fig_evo.add_trace(go.Scatter(
+                        x=_idx, y=_y_p5, name='P5 Seguimiento',
+                        mode='lines', line=dict(width=1.8, color='#C0392B'),
+                        hovertemplate='%{x|%d-%m-%Y}<br>%{y:.0f}<extra>P5 Seguimiento</extra>',
+                    ))
+
                 _y_4p = serie_acumulada(_4p_fecha, _idx) / _div
                 _fig_evo.add_trace(go.Scatter(
                     x=_idx, y=_y_4p, name='4 Pilares completos',
                     mode='lines', line=dict(width=3.2, color='#4F0B7B'),
                     hovertemplate='%{x|%d-%m-%Y}<br>%{y:.0f}<extra>4 Pilares completos</extra>',
                 ))
+
+                _n_m5_fechable = int(_m5_fecha.notna().sum())
+                if _n_m5_fechable:
+                    _y_m5 = serie_acumulada(_m5_fecha, _idx) / _div
+                    _fig_evo.add_trace(go.Scatter(
+                        x=_idx, y=_y_m5, name='Meta 5 (5 pilares)',
+                        mode='lines', line=dict(width=3.2, color='#B8860B'),
+                        hovertemplate='%{x|%d-%m-%Y}<br>%{y:.0f}<extra>Meta 5 (5 pilares)</extra>',
+                    ))
 
                 _secs = np.asarray((_idx - EVO_INICIO).total_seconds())
                 _frac = np.clip(_secs / (EVO_FIN_PLAN - EVO_INICIO).total_seconds(), 0, 1)
@@ -1562,9 +1625,18 @@ if df_raw is not None:
                     hovermode='x unified',
                 )
                 st.plotly_chart(_fig_evo, use_container_width=True)
+                # Cuántos de los Meta 5 cumplidas quedan efectivamente fechados
+                _m5_cumplida_fechable = int(
+                    (_m5_fecha.notna() & df_seg['Meta 5 Cumplida'].fillna(False)).sum()
+                ) if 'Meta 5 Cumplida' in df_seg.columns else _n_m5_fechable
+                _sin_fecha_m5 = max(0, _meta5_real - _m5_cumplida_fechable)
                 st.caption(
                     f"📌 **Meta 5 hoy (real, con Seguimiento): {_meta5_real:,} CTs** "
-                    f"({_meta5_real / _total_evo * 100:.1f}% del plan). Sin serie temporal."
+                    f"({_meta5_real / _total_evo * 100:.1f}% del plan). "
+                    f"De esos, **{_m5_cumplida_fechable:,}** tienen fecha de seguimiento y se "
+                    f"pueden ubicar en el tiempo; **{_sin_fecha_m5:,}** están cumplidos pero sin "
+                    f"fecha informada. La curva «Meta 5 (5 pilares)» grafica **{_n_m5_fechable:,}** "
+                    f"CTs con los 5 pilares fechados (programados y no programados)."
                 )
 
             st.divider()
