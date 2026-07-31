@@ -500,23 +500,24 @@ def cuatro_pilares_fecha(df_seg):
 
 
 def meta5_fecha(df_seg):
-    """Fecha EXACTA en que cada CT completó los 5 pilares = fecha del ÚLTIMO de los
-    5, exigiendo que los 5 tengan fecha (NaT donde falta alguno).
+    """Ubica en el tiempo los CTs que YA cuentan como Meta 5, sin redefinir la meta.
 
-    El Pilar 5 usa 'FECHA SEGUIMIENTO PRESCRIPCION 1/2' consolidada por el
-    procesador: basta cualquiera de los dos seguimientos, y se toma la más
-    temprana como fecha de cumplimiento.
-
-    Es un PISO de Meta 5: hay CTs con estado 'Seguimiento 1/2' informado pero sin
-    fecha de seguimiento, que esta curva no puede ubicar en el tiempo."""
+    El universo es exactamente la columna 'Meta 5 Cumplida' que calcula el
+    procesador (Es_Programado + 5 pilares, con el Pilar 5 desde
+    ESTADO SEGUIMIENTO). Las fechas SOLO se usan para saber CUÁNDO ocurrió:
+    fecha = la del último de los 5 pilares. Devuelve NaT donde el CT no cumple
+    Meta 5 o donde falta alguna fecha, así el total de la curva nunca supera el
+    conteo oficial de Meta 5."""
     cols = [c for c in PILAR_FECHA_REAL.values() if c in df_seg.columns]
-    if COL_FECHA_SEGUIMIENTO not in df_seg.columns or len(cols) < len(PILAR_FECHA_REAL):
+    if (COL_FECHA_SEGUIMIENTO not in df_seg.columns
+            or 'Meta 5 Cumplida' not in df_seg.columns
+            or len(cols) < len(PILAR_FECHA_REAL)):
         return pd.Series(pd.NaT, index=df_seg.index)
     cols = cols + [COL_FECHA_SEGUIMIENTO]
     fechas = df_seg[cols].apply(pd.to_datetime, errors='coerce')
-    todas_presentes = fechas.notna().all(axis=1)
+    cumple = df_seg['Meta 5 Cumplida'].fillna(False).astype(bool)
     ult = fechas.max(axis=1)
-    return ult.where(todas_presentes, other=pd.NaT)
+    return ult.where(cumple & fechas.notna().all(axis=1), other=pd.NaT)
 
 
 # ── 6. FUNCIÓN PARETO EP ──────────────────────────────────────────────────────
@@ -1533,9 +1534,10 @@ if df_raw is not None:
                 "Reconstruida con las **fechas reales de ejecución** de SIGECO (resolución diaria, "
                 "desde ene-2025). Pilares 1–5 y «4 Pilares completos» son **exactos**. El **P5 "
                 "Seguimiento** usa las fechas de seguimiento de prescripción (basta **cualquiera "
-                "de los dos** seguimientos; se toma la más temprana). La curva **Meta 5** es un "
-                "**piso**: hay CTs con seguimiento informado sin fecha, que no se pueden ubicar "
-                "en el tiempo. Respeta los filtros del panel lateral."
+                "de los dos** seguimientos; se toma la más temprana). La curva **Meta 5 cumplida** "
+                "no redefine la meta: son los mismos CTs de «Meta 5 Cumplida», solo ubicados en "
+                "el tiempo, y es un **piso** porque a algunos les falta alguna fecha. "
+                "Respeta los filtros del panel lateral."
             )
 
             _cols_fp = {p: c for p, c in PILAR_FECHA_REAL.items() if c in df_seg.columns}
@@ -1590,9 +1592,9 @@ if df_raw is not None:
                 if _n_m5_fechable:
                     _y_m5 = serie_acumulada(_m5_fecha, _idx) / _div
                     _fig_evo.add_trace(go.Scatter(
-                        x=_idx, y=_y_m5, name='Meta 5 (5 pilares)',
+                        x=_idx, y=_y_m5, name='Meta 5 cumplida',
                         mode='lines', line=dict(width=3.2, color='#B8860B'),
-                        hovertemplate='%{x|%d-%m-%Y}<br>%{y:.0f}<extra>Meta 5 (5 pilares)</extra>',
+                        hovertemplate='%{x|%d-%m-%Y}<br>%{y:.0f}<extra>Meta 5 cumplida</extra>',
                     ))
 
                 _secs = np.asarray((_idx - EVO_INICIO).total_seconds())
@@ -1625,18 +1627,16 @@ if df_raw is not None:
                     hovermode='x unified',
                 )
                 st.plotly_chart(_fig_evo, use_container_width=True)
-                # Cuántos de los Meta 5 cumplidas quedan efectivamente fechados
-                _m5_cumplida_fechable = int(
-                    (_m5_fecha.notna() & df_seg['Meta 5 Cumplida'].fillna(False)).sum()
-                ) if 'Meta 5 Cumplida' in df_seg.columns else _n_m5_fechable
-                _sin_fecha_m5 = max(0, _meta5_real - _m5_cumplida_fechable)
+                # El conteo oficial de Meta 5 no cambia: es la columna 'Meta 5 Cumplida'.
+                # La curva es un subconjunto suyo (los que además tienen los 5 pilares
+                # fechados), nunca un universo distinto.
+                _sin_fecha_m5 = max(0, _meta5_real - _n_m5_fechable)
                 st.caption(
                     f"📌 **Meta 5 hoy (real, con Seguimiento): {_meta5_real:,} CTs** "
                     f"({_meta5_real / _total_evo * 100:.1f}% del plan). "
-                    f"De esos, **{_m5_cumplida_fechable:,}** tienen fecha de seguimiento y se "
-                    f"pueden ubicar en el tiempo; **{_sin_fecha_m5:,}** están cumplidos pero sin "
-                    f"fecha informada. La curva «Meta 5 (5 pilares)» grafica **{_n_m5_fechable:,}** "
-                    f"CTs con los 5 pilares fechados (programados y no programados)."
+                    f"La curva «Meta 5 cumplida» ubica en el tiempo **{_n_m5_fechable:,}** de "
+                    f"ellos; los **{_sin_fecha_m5:,}** restantes cumplen la meta pero no tienen "
+                    f"alguna de las 5 fechas informada, por eso no aparecen en la curva."
                 )
 
             st.divider()
