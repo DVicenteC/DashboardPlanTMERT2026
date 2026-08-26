@@ -979,8 +979,9 @@ if df_raw is not None:
         "🔍 Análisis de Denuncias EP",
         "✅ Estado Seguimiento",
         "👨‍⚕️ Evolución e Indicadores por Profesional",
+        "🩺 Vigilancia de la Salud",
     ])
-    tab1, tab2, tab_seg, tab_ind = tabs
+    tab1, tab2, tab_seg, tab_ind, tab_vs = tabs
 
     # ── TAB 1: PROGRAMACIÓN ───────────────────────────────────────────────────
     with tab1:
@@ -1278,6 +1279,308 @@ if df_raw is not None:
                 if _vig_con > 0 and _vig_venc == 0:
                     st.caption("Ninguna identificación «Aceptable» supera los 36 meses "
                                "(datos 2025–2026; todas vigentes a la fecha).")
+
+    # ── TAB: VIGILANCIA DE LA SALUD ───────────────────────────────────────────
+    with tab_vs:
+        if df_seg.empty:
+            st.info("ℹ️ Se requiere data de seguimiento para calcular la vigilancia de la salud.")
+        else:
+            st.subheader("🩺 Vigilancia de la Salud — Protocolo TMERT")
+            st.caption(
+                "Vigilancia de las **personas**: qué centros de trabajo con condición Crítica (C) o "
+                "No Crítica (M) tienen trabajadores pendientes de ingresar a vigilancia de la salud. "
+                "La vigilancia del **ambiente** (identificación, evaluación y prescripción de medidas) "
+                "vive en el tab «✅ Estado Seguimiento». Respeta los filtros del panel lateral · "
+                f"universo actual: **{len(df_seg):,}** CTs."
+            )
+
+            # Nombres EXACTOS de la hoja de seguimiento (no pasa por normalizar_columnas_tmert).
+            _VS_COND  = 'Condición o Nivel de Riesgo (C,M,A)'
+            _VS_DH    = 'N° de hombres que deben ingresar a vigilancia de salud 2026'
+            _VS_DM    = 'N° de mujeres que deben ingresar a vigilancia de salud 2026'
+            _VS_EH    = 'N° de hombres evaluados 2026'
+            _VS_EM    = 'N° de mujeres evaluadas 2026'
+            _VS_FEXAM = 'Fecha última Vigilancia de Salud 2026'
+            _VS_FEVAL = 'Fecha evaluación Vigilancia de Salud 2026'
+            _VS_FIA   = 'Fecha Identificación Avanzada (real)'
+            # Plazo de ingreso a vigilancia de la salud desde la Identificación Avanzada:
+            # 30 días (criterio confirmado por jefatura, 26-08-2026). NO confundir con los
+            # 90 días de intervención de las Críticas que usa la vigilancia ambiental.
+            _VS_PLAZO_DIAS = 30
+
+            _vs_falta = [c for c in (_VS_COND, _VS_DH, _VS_DM, _VS_EH, _VS_EM)
+                         if c not in df_seg.columns]
+            if _vs_falta:
+                st.warning(
+                    "⚠️ La hoja de seguimiento no trae las columnas de vigilancia de la salud: "
+                    + " · ".join(f"«{c}»" for c in _vs_falta)
+                    + ". Vuelve a correr el procesador y a subir la hoja para activar esta vista."
+                )
+            else:
+                _vs = df_seg.copy()
+
+                # Los conteos llegan como texto (la hoja se lee con dtype=str).
+                # El NaN se DEJA como NaN: "sin nómina VS" y "nómina de 0 personas" son
+                # cosas distintas, y esa diferencia es la que separa al pendiente que
+                # nunca ingresó del que ingresó incompleto.
+                for _c in (_VS_DH, _VS_DM, _VS_EH, _VS_EM):
+                    _vs[_c] = pd.to_numeric(_vs[_c], errors='coerce')
+                _vs['_deben'] = _vs[[_VS_DH, _VS_DM]].sum(axis=1, min_count=1)
+                _vs['_evalu'] = _vs[[_VS_EH, _VS_EM]].sum(axis=1, min_count=1)
+
+                # Condición C/M/A normalizada; los vacíos quedan como '' (no NaN) para que
+                # los filtros por negación no se traguen los nulos.
+                _vs['_cond'] = (_vs[_VS_COND].astype(str).str.strip().str.upper()
+                                .replace({'NAN': '', 'NONE': '', 'NAT': '', '<NA>': ''}))
+                _vs.loc[_vs[_VS_COND].isna(), '_cond'] = ''
+
+                _vs_es_cm    = _vs['_cond'].isin(['C', 'M'])
+                _vs_con_nom  = _vs['_deben'].notna()
+                _vs_completa = _vs_con_nom & (_vs['_evalu'].fillna(0) >= _vs['_deben'])
+
+                _vs['_estado_vs'] = np.where(
+                    ~_vs_con_nom, 'Sin ingresar',
+                    np.where(_vs_completa, 'Completa', 'Incompleta'))
+                _vs['_brecha'] = (_vs['_deben'] - _vs['_evalu'].fillna(0)).clip(lower=0)
+
+                # Antigüedad desde la Identificación Avanzada que originó la condición.
+                _vs_hoy = pd.Timestamp.today().normalize()
+                _vs_fia = (pd.to_datetime(_vs[_VS_FIA], errors='coerce')
+                           if _VS_FIA in _vs.columns
+                           else pd.Series(pd.NaT, index=_vs.index))
+                _vs['_dias_ia'] = (_vs_hoy - _vs_fia).dt.days
+
+                _VS_LBL_FUERA = f'Fuera de plazo (>{_VS_PLAZO_DIAS} días)'
+                _vs['_estado_plazo'] = np.select(
+                    [_vs['_estado_vs'] == 'Completa',
+                     _vs['_dias_ia'].isna(),
+                     _vs['_dias_ia'] > _VS_PLAZO_DIAS],
+                    ['Completa', 'Sin fecha Ident. Avanzada', _VS_LBL_FUERA],
+                    default='En plazo')
+
+                _cm = _vs[_vs_es_cm].copy()
+
+                # ── a) SEMÁFORO DE PENDIENTES ──────────────────────────────────
+                st.markdown("#### 🚦 Semáforo de pendientes")
+                _n_c   = int((_cm['_cond'] == 'C').sum())
+                _n_m   = int((_cm['_cond'] == 'M').sum())
+                _n_sin = int((_cm['_estado_vs'] == 'Sin ingresar').sum())
+                _n_inc = int((_cm['_estado_vs'] == 'Incompleta').sum())
+                _n_com = int((_cm['_estado_vs'] == 'Completa').sum())
+
+                _s1, _s2, _s3, _s4 = st.columns(4)
+                _s1.metric("CT que requieren VS (C o M)", f"{len(_cm):,}",
+                           f"{_n_c} Críticas · {_n_m} No Críticas", delta_color="off")
+                _s2.metric("🔴 Sin ingresar a vigilancia", f"{_n_sin:,}",
+                           "sin nómina VS", delta_color="inverse")
+                _s3.metric("🟠 Vigilancia incompleta", f"{_n_inc:,}",
+                           "evaluados < deben", delta_color="inverse")
+                _s4.metric("🟢 Vigilancia completa", f"{_n_com:,}",
+                           "evaluados ≥ deben", delta_color="off")
+
+                st.markdown(
+                    f"**⏱️ Plazo de ingreso a vigilancia: {_VS_PLAZO_DIAS} días desde la "
+                    "Identificación Avanzada** · se mide sobre los CT C/M que aún no están completos"
+                )
+                _pend_cm    = _cm[_cm['_estado_vs'] != 'Completa']
+                _n_fuera    = int((_pend_cm['_dias_ia'] > _VS_PLAZO_DIAS).sum())
+                _n_dentro   = int(((_pend_cm['_dias_ia'] >= 0) &
+                                   (_pend_cm['_dias_ia'] <= _VS_PLAZO_DIAS)).sum())
+                _n_sinfecha = int(_pend_cm['_dias_ia'].isna().sum())
+                _p1, _p2, _p3 = st.columns(3)
+                _p1.metric(f"Fuera de plazo (>{_VS_PLAZO_DIAS} días)", f"{_n_fuera:,}",
+                           delta_color="inverse")
+                _p2.metric(f"En plazo (≤{_VS_PLAZO_DIAS} días)", f"{_n_dentro:,}",
+                           delta_color="off")
+                _p3.metric("Sin fecha de Ident. Avanzada", f"{_n_sinfecha:,}", delta_color="off")
+
+                st.markdown("**👥 Trabajadores en CT con condición C o M**")
+                _t_deben   = int(_cm['_deben'].sum()) if _cm['_deben'].notna().any() else 0
+                _t_evalu   = int(_cm['_evalu'].sum()) if _cm['_evalu'].notna().any() else 0
+                _cobertura = (_t_evalu / _t_deben * 100) if _t_deben > 0 else 0.0
+                _w1, _w2, _w3 = st.columns(3)
+                _w1.metric("Deben ingresar a VS", f"{_t_deben:,}")
+                _w2.metric("Evaluados", f"{_t_evalu:,}")
+                _w3.metric("Cobertura", f"{_cobertura:.1f}%",
+                           f"brecha: {_t_deben - _t_evalu:,} trabajadores",
+                           delta_color="inverse")
+                st.caption(
+                    "⚠️ Los conteos de vigilancia de la salud cubren la ventana **2025-2026** "
+                    "(el nombre de la columna dice 2026 sólo por compatibilidad con la hoja) y "
+                    "cuentan **RUT distintos en toda la ventana**: no son cifras anuales y no "
+                    "deben sumarse año a año."
+                )
+
+                # ── b) TABLA ACCIONABLE DE PENDIENTES ──────────────────────────
+                st.divider()
+                st.markdown("#### 📋 Pendientes de vigilancia de la salud")
+                st.caption(
+                    "CT con condición C o M que no están completos. Orden: primero Críticas, "
+                    "luego No Críticas; dentro de cada grupo, mayor antigüedad desde la "
+                    "Identificación Avanzada arriba. **Los CT sin fecha de Identificación "
+                    "Avanzada quedan al final** (sin fecha no se puede juzgar la antigüedad). "
+                    "En rojo, las Críticas que todavía no ingresan a vigilancia."
+                )
+
+                if _pend_cm.empty:
+                    st.success("✅ No hay CT con condición C o M pendientes de vigilancia de la "
+                               "salud en el filtro actual.")
+                else:
+                    _tab_vs = _pend_cm.copy()
+                    _tab_vs['_ord_cond'] = _tab_vs['_cond'].map({'C': 0, 'M': 1}).fillna(9)
+                    _tab_vs = _tab_vs.sort_values(
+                        ['_ord_cond', '_dias_ia'], ascending=[True, False], na_position='last')
+
+                    _tab_vs['Condición'] = _tab_vs['_cond'].map(
+                        {'C': 'C · Crítica', 'M': 'M · No Crítica'}).fillna(_tab_vs['_cond'])
+                    _tab_vs['Fecha Ident. Avanzada'] = (
+                        _vs_fia.reindex(_tab_vs.index).dt.strftime('%d-%m-%Y').fillna(''))
+                    _tab_vs['Días desde Ident. Avanzada'] = _tab_vs['_dias_ia']
+                    _tab_vs['Estado plazo'] = _tab_vs['_estado_plazo']
+                    _tab_vs['Estado VS']    = _tab_vs['_estado_vs']
+                    _tab_vs['Brecha']       = _tab_vs['_brecha']
+                    for _orig, _dest in ((_VS_DH, 'Deben H'), (_VS_DM, 'Deben M'),
+                                         (_VS_EH, 'Evaluados H'), (_VS_EM, 'Evaluados M')):
+                        _tab_vs[_dest] = _tab_vs[_orig]
+                    for _fcol, _dest in ((_VS_FEXAM, 'Fecha última VS (examen)'),
+                                         (_VS_FEVAL, 'Fecha últ. evaluación VS')):
+                        if _fcol in _tab_vs.columns:
+                            _tab_vs[_dest] = (pd.to_datetime(_tab_vs[_fcol], errors='coerce')
+                                              .dt.strftime('%d-%m-%Y').fillna(''))
+
+                    _cols_vs = [c for c in [
+                        'Región', 'Ergonomo', 'Nombre Empleador', 'ID-CT', 'Nombre CT',
+                        'Comuna CT', 'Estado Centro de Trabajo', 'Condición',
+                        'Fecha Ident. Avanzada', 'Días desde Ident. Avanzada',
+                        'Estado plazo', 'Estado VS',
+                        'Deben H', 'Deben M', 'Evaluados H', 'Evaluados M', 'Brecha',
+                        'Fecha última VS (examen)', 'Fecha últ. evaluación VS',
+                    ] if c in _tab_vs.columns]
+                    _tab_vs_disp = _tab_vs[_cols_vs].copy()
+                    # Int64 nullable: enteros sin ".0" y conservando el NaN de
+                    # los CT sin nómina VS (que no es lo mismo que un 0).
+                    for _icol in ('Días desde Ident. Avanzada', 'Deben H', 'Deben M',
+                                  'Evaluados H', 'Evaluados M', 'Brecha'):
+                        if _icol in _tab_vs_disp.columns:
+                            _tab_vs_disp[_icol] = _tab_vs_disp[_icol].astype('Int64')
+
+                    def _hl_vs(row):
+                        """Rojo suave: Crítica que todavía no ingresa a vigilancia."""
+                        _rojo = (str(row.get('Condición', '')).startswith('C')
+                                 and row.get('Estado VS') == 'Sin ingresar')
+                        return ['background-color: #fdecea' if _rojo else ''] * len(row)
+
+                    st.dataframe(_tab_vs_disp.style.apply(_hl_vs, axis=1),
+                                 use_container_width=True, hide_index=True)
+
+                    _buf_vs = io.BytesIO()
+                    with pd.ExcelWriter(_buf_vs, engine='openpyxl') as _w:
+                        _tab_vs_disp.to_excel(_w, index=False, sheet_name='Pendientes_VS')
+                    st.download_button(
+                        "📥 Descargar pendientes de VS en Excel", data=_buf_vs.getvalue(),
+                        file_name=f'pendientes_vigilancia_salud_{datetime.now().strftime("%d-%m-%Y")}.xlsx',
+                        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        key='download_vs_pendientes')
+
+                if _VS_FEXAM not in _vs.columns:
+                    st.caption(
+                        f"ℹ️ La hoja no trae «{_VS_FEXAM}» (último examen de vigilancia); se muestra "
+                        "sólo la fecha de evaluación médica. Aparecerá al volver a correr el "
+                        "procesador y resubir la hoja de seguimiento."
+                    )
+
+                # ── c) BRECHA INVERSA ──────────────────────────────────────────
+                st.divider()
+                st.markdown("#### 🔎 Brecha inversa — vigilancia sin condición registrada")
+                _vs_inv       = _vs[_vs_con_nom & (_vs['_cond'] == '')]
+                _vs_nom_total = int(_vs_con_nom.sum())
+                _vs_nom_ace   = int((_vs_con_nom & (_vs['_cond'] == 'A')).sum())
+                _b1, _b2 = st.columns(2)
+                _b1.metric("CT con nómina VS", f"{_vs_nom_total:,}")
+                _b2.metric("… sin condición registrada", f"{len(_vs_inv):,}",
+                           "sin Ident. Avanzada en ISTProd", delta_color="inverse")
+                st.caption(
+                    "Trabajadores en vigilancia de la salud cuyo CT no tiene Identificación "
+                    "Avanzada registrada en ISTProd. Es un hallazgo de calidad de datos: o falta "
+                    "cargar la identificación, o la nómina está asociada al CT equivocado."
+                    + (f" Además, **{_vs_nom_ace}** CT con nómina VS tienen condición Aceptable (A)."
+                       if _vs_nom_ace else "")
+                )
+                if not _vs_inv.empty:
+                    with st.expander(f"📄 Ver los {len(_vs_inv):,} CT con nómina VS sin condición",
+                                     expanded=False):
+                        _inv_disp = _vs_inv.copy()
+                        _inv_disp['Deben H']     = _inv_disp[_VS_DH]
+                        _inv_disp['Deben M']     = _inv_disp[_VS_DM]
+                        _inv_disp['Evaluados H'] = _inv_disp[_VS_EH]
+                        _inv_disp['Evaluados M'] = _inv_disp[_VS_EM]
+                        for _fcol, _dest in ((_VS_FEXAM, 'Fecha última VS (examen)'),
+                                             (_VS_FEVAL, 'Fecha últ. evaluación VS')):
+                            if _fcol in _inv_disp.columns:
+                                _inv_disp[_dest] = (pd.to_datetime(_inv_disp[_fcol], errors='coerce')
+                                                    .dt.strftime('%d-%m-%Y').fillna(''))
+                        _cols_inv = [c for c in [
+                            'Región', 'Ergonomo', 'Nombre Empleador', 'ID-CT', 'Nombre CT',
+                            'Comuna CT', 'Estado Centro de Trabajo',
+                            'Deben H', 'Deben M', 'Evaluados H', 'Evaluados M',
+                            'Fecha última VS (examen)', 'Fecha últ. evaluación VS',
+                        ] if c in _inv_disp.columns]
+                        _inv_disp = _inv_disp[_cols_inv].copy()
+                        for _icol in ('Deben H', 'Deben M', 'Evaluados H', 'Evaluados M'):
+                            if _icol in _inv_disp.columns:
+                                _inv_disp[_icol] = _inv_disp[_icol].astype('Int64')
+                        st.dataframe(_inv_disp, use_container_width=True, hide_index=True)
+                        _buf_inv = io.BytesIO()
+                        with pd.ExcelWriter(_buf_inv, engine='openpyxl') as _w:
+                            _inv_disp.to_excel(_w, index=False, sheet_name='VS_sin_condicion')
+                        st.download_button(
+                            "📥 Descargar brecha inversa en Excel", data=_buf_inv.getvalue(),
+                            file_name=f'vs_sin_condicion_{datetime.now().strftime("%d-%m-%Y")}.xlsx',
+                            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                            key='download_vs_inversa')
+
+                # ── d) COBERTURA POR REGIÓN Y POR ERGÓNOMO ─────────────────────
+                st.divider()
+                st.markdown("#### 🗺️ Dónde está la gestión pendiente")
+                st.caption("CT con condición C o M según estado de vigilancia de la salud. "
+                           "Ordenado por cantidad de pendientes (sin ingresar + incompletos).")
+                if _cm.empty:
+                    st.info("No hay CT con condición C o M en el filtro actual.")
+                else:
+                    _MAPA_VS = {'Sin ingresar': '#C0392B', 'Incompleta': '#E67E22',
+                                'Completa': '#1A936F'}
+                    _g1, _g2 = st.columns(2)
+                    for _box, _dim, _tit in ((_g1, 'Región', 'Por Región'),
+                                             (_g2, 'Ergonomo', 'Por Ergónomo')):
+                        with _box:
+                            st.markdown(f"**{_tit}**")
+                            if _dim not in _cm.columns:
+                                st.info(f"Columna «{_dim}» no disponible.")
+                                continue
+                            _gdf = (_cm.assign(**{_dim: _cm[_dim].fillna('(sin dato)')})
+                                       .groupby([_dim, '_estado_vs']).size()
+                                       .reset_index(name='CTs'))
+                            if _gdf.empty:
+                                st.info("Sin datos en el filtro actual.")
+                                continue
+                            _orden_vs = (_gdf[_gdf['_estado_vs'] != 'Completa']
+                                         .groupby(_dim)['CTs'].sum()
+                                         .reindex(_gdf[_dim].unique(), fill_value=0)
+                                         .fillna(0).sort_values(ascending=True))
+                            _fig_vs = px.bar(
+                                _gdf, x='CTs', y=_dim, color='_estado_vs', orientation='h',
+                                height=max(320, 26 * len(_orden_vs) + 140),
+                                color_discrete_map=_MAPA_VS,
+                                category_orders={'_estado_vs': ['Sin ingresar', 'Incompleta',
+                                                                'Completa']})
+                            _fig_vs.update_layout(
+                                barmode='stack',
+                                yaxis={'categoryorder': 'array',
+                                       'categoryarray': _orden_vs.index.tolist()},
+                                margin=dict(l=0, t=10, b=0, r=0),
+                                xaxis_title='CTs con condición C o M', yaxis_title='',
+                                legend=dict(orientation='h', y=-0.12, title=''))
+                            st.plotly_chart(_fig_vs, use_container_width=True)
 
     # ── TAB: EVOLUCIÓN E INDICADORES POR PROFESIONAL ──────────────────────────
     with tab_ind:
