@@ -1582,6 +1582,116 @@ if df_raw is not None:
                                 legend=dict(orientation='h', y=-0.12, title=''))
                             st.plotly_chart(_fig_vs, use_container_width=True)
 
+                # ── e) TODO LO REALIZADO EN VIGILANCIA DE LA SALUD ─────────────
+                st.divider()
+                st.markdown("#### 🗂️ Todo lo realizado en vigilancia de la salud")
+
+                _fexam_s = (pd.to_datetime(_vs[_VS_FEXAM], errors='coerce')
+                            if _VS_FEXAM in _vs.columns else pd.Series(pd.NaT, index=_vs.index))
+                _feval_s = (pd.to_datetime(_vs[_VS_FEVAL], errors='coerce')
+                            if _VS_FEVAL in _vs.columns else pd.Series(pd.NaT, index=_vs.index))
+                # "Realizado" = el CT está en vigilancia de la salud: tiene nómina VS o
+                # alguna fecha de vigilancia informada. Incluye programados y NO
+                # programados, y las cuatro condiciones (C, M, A y sin condición).
+                _vs_hecho = _vs_con_nom | _fexam_s.notna() | _feval_s.notna()
+                _real = _vs[_vs_hecho].copy()
+
+                if _real.empty:
+                    st.info("ℹ️ No hay centros de trabajo con actividad de vigilancia de la "
+                            "salud en el filtro actual.")
+                else:
+                    if 'Es_Programado' in _real.columns:
+                        _real['Programado'] = _real['Es_Programado'].map(
+                            {True: 'Programado', False: 'No Programado'}).fillna('')
+                        _n_prog   = int((_real['Es_Programado'] == True).sum())
+                        _n_noprog = int((_real['Es_Programado'] == False).sum())
+                    else:
+                        _real['Programado'] = ''
+                        _n_prog = _n_noprog = 0
+
+                    _r_deben = int(_real['_deben'].sum()) if _real['_deben'].notna().any() else 0
+                    _r_evalu = int(_real['_evalu'].sum()) if _real['_evalu'].notna().any() else 0
+                    _r_cob   = (_r_evalu / _r_deben * 100) if _r_deben > 0 else 0.0
+
+                    _r1, _r2, _r3, _r4 = st.columns(4)
+                    _r1.metric("CT en vigilancia de la salud", f"{len(_real):,}")
+                    _r2.metric("Del plan", f"{_n_prog:,}", "programados", delta_color="off")
+                    _r3.metric("Fuera del plan", f"{_n_noprog:,}", "no programados",
+                               delta_color="off")
+                    _r4.metric("Trabajadores evaluados", f"{_r_evalu:,}",
+                               f"de {_r_deben:,} · {_r_cob:.1f}%", delta_color="off")
+
+                    _cnt_cond = _real['_cond'].value_counts()
+                    st.caption(
+                        "Inventario completo de la vigilancia de la salud: **programados y no "
+                        "programados en una sola tabla**, con todas las condiciones. Ordenado por "
+                        "la vigilancia más reciente arriba (los CT sin fecha quedan al final). "
+                        "Condición: "
+                        + " · ".join(
+                            f"**{int(_cnt_cond.get(_k, 0))}** {_lbl}"
+                            for _k, _lbl in (('C', 'Críticas'), ('M', 'No Críticas'),
+                                             ('A', 'Aceptables'), ('', 'sin condición registrada'))
+                        )
+                    )
+
+                    _real['Condición'] = _real['_cond'].map(
+                        {'C': 'C · Crítica', 'M': 'M · No Crítica', 'A': 'A · Aceptable'}
+                    ).fillna('(sin condición)')
+                    _real['Estado VS'] = _real['_estado_vs']
+                    _real['Total deben']     = _real['_deben']
+                    _real['Total evaluados'] = _real['_evalu']
+                    _real['Brecha']          = _real['_brecha']
+                    _real['Cobertura %'] = ((_real['_evalu'].fillna(0) / _real['_deben'] * 100)
+                                            .where(_real['_deben'] > 0).round(1))
+                    for _orig, _dest in ((_VS_DH, 'Deben H'), (_VS_DM, 'Deben M'),
+                                         (_VS_EH, 'Evaluados H'), (_VS_EM, 'Evaluados M')):
+                        _real[_dest] = _real[_orig]
+                    _real['Fecha Ident. Avanzada'] = (
+                        _vs_fia.reindex(_real.index).dt.strftime('%d-%m-%Y').fillna(''))
+                    _real['Fecha última VS (examen)'] = (
+                        _fexam_s.reindex(_real.index).dt.strftime('%d-%m-%Y').fillna(''))
+                    _real['Fecha últ. evaluación VS'] = (
+                        _feval_s.reindex(_real.index).dt.strftime('%d-%m-%Y').fillna(''))
+
+                    # Orden: la vigilancia más reciente (examen o evaluación) primero.
+                    _real['_ult_vs'] = pd.concat(
+                        [_fexam_s.reindex(_real.index), _feval_s.reindex(_real.index)],
+                        axis=1).max(axis=1)
+                    _real = _real.sort_values('_ult_vs', ascending=False, na_position='last')
+
+                    _cols_real = [c for c in [
+                        'Programado', 'Región', 'Ergonomo', 'Nombre Empleador', 'ID-CT',
+                        'Nombre CT', 'Comuna CT', 'Estado Centro de Trabajo',
+                        'Condición', 'Fecha Ident. Avanzada', 'Estado VS',
+                        'Deben H', 'Deben M', 'Total deben',
+                        'Evaluados H', 'Evaluados M', 'Total evaluados',
+                        'Brecha', 'Cobertura %',
+                        'Fecha última VS (examen)', 'Fecha últ. evaluación VS',
+                    ] if c in _real.columns]
+                    _real_disp = _real[_cols_real].copy()
+                    for _icol in ('Deben H', 'Deben M', 'Total deben', 'Evaluados H',
+                                  'Evaluados M', 'Total evaluados', 'Brecha'):
+                        if _icol in _real_disp.columns:
+                            _real_disp[_icol] = _real_disp[_icol].astype('Int64')
+
+                    def _hl_real(row):
+                        """Rojo suave: vigilancia incompleta en un CT Crítico."""
+                        _rojo = (str(row.get('Condición', '')).startswith('C')
+                                 and row.get('Estado VS') == 'Incompleta')
+                        return ['background-color: #fdecea' if _rojo else ''] * len(row)
+
+                    st.dataframe(_real_disp.style.apply(_hl_real, axis=1),
+                                 use_container_width=True, hide_index=True)
+
+                    _buf_real = io.BytesIO()
+                    with pd.ExcelWriter(_buf_real, engine='openpyxl') as _w:
+                        _real_disp.to_excel(_w, index=False, sheet_name='VS_Realizado')
+                    st.download_button(
+                        "📥 Descargar todo lo realizado en VS (Excel)", data=_buf_real.getvalue(),
+                        file_name=f'vigilancia_salud_realizado_{datetime.now().strftime("%d-%m-%Y")}.xlsx',
+                        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        key='download_vs_realizado')
+
     # ── TAB: EVOLUCIÓN E INDICADORES POR PROFESIONAL ──────────────────────────
     with tab_ind:
         if df_seg.empty:
