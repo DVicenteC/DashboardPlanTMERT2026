@@ -14,8 +14,12 @@ La pregunta que el tab tiene que contestar de un vistazo:
 vigilancia de la salud — y están pendientes?**
 
 "Pendiente" tiene dos sabores distintos y hay que poder distinguirlos:
-1. **No ha ingresado a vigilancia**: tiene condición C o M pero NO tiene nómina VS del año.
+1. **No ha ingresado a vigilancia**: tiene condición C o M pero NO tiene nómina VS.
 2. **Ingresó pero está incompleto**: tiene nómina VS y `evaluados < deben ingresar`.
+
+Ojo con el caso 2: es el más común (31 de los 40 CT C/M con nómina en el plan) y suele venir con
+`Fecha última Vigilancia de Salud` vacía, porque a nadie del CT le han tomado el examen aún. Un CT
+con `deben ingresar = 30` y `evaluados = 0` es un pendiente severo, no un dato faltante.
 
 ---
 
@@ -36,8 +40,8 @@ Columnas nuevas ya disponibles en `df_seg` (nombres EXACTOS, con tildes y `°`; 
 | `N° de mujeres que deben ingresar a vigilancia de salud 2026` | ídem. |
 | `N° de hombres evaluados 2026` | De la nómina, los que tienen `Fecha_Evaluacion` informada. |
 | `N° de mujeres evaluadas 2026` | ídem. |
-| `Fecha última Vigilancia de Salud 2026` | Último **examen** de vigilancia del CT (116 CT la tienen). Es el acto de vigilancia propiamente tal. |
-| `Fecha evaluación Vigilancia de Salud 2026` | Última **evaluación médica** del CT (102 CT). NO es la misma fecha que la anterior: difieren en 84 de 119 CT. |
+| `Fecha última Vigilancia de Salud 2026` | Último **examen** de vigilancia del CT. Sólo 116 de los 172 CT con nómina la tienen: **si está vacía es porque a nadie de ese CT le han tomado el examen todavía**, no porque falte el dato. |
+| `Fecha evaluación Vigilancia de Salud 2026` | Última **evaluación médica** del CT (102 CT). NO es la misma fecha que la anterior: difieren en 84 CT. |
 | `Fecha Identificación Avanzada (real)` | Fecha de la identificación que originó la condición. |
 
 **Trampas de tipo que sí importan:**
@@ -84,7 +88,7 @@ Fecha última VS (examen), Fecha últ. evaluación VS`.
 - Botón de descarga a Excel (mismo patrón `io.BytesIO` + `st.download_button`, con `key=` único).
 
 **c) Brecha inversa (un bloque chico, no protagonista)**
-CT **con nómina VS pero sin condición registrada**. Son 80 en el universo (70 en el plan): gente en
+CT **con nómina VS pero sin condición registrada**. Son 124 en el universo (100 en el plan): gente en
 vigilancia de la salud cuyo CT no tiene Identificación Avanzada registrada en ISTProd. Es un hallazgo
 real de calidad de datos, vale la pena mostrarlo aunque sea como métrica + expander con la tabla.
 
@@ -124,19 +128,20 @@ Con la data del plan (5.500 CT programados; universo completo 7.239) y la ventan
 | Métrica | Plan | Universo |
 |---|---:|---:|
 | CT con condición C o M | **62** (37 C + 25 M) | 72 (45 C + 27 M) |
-| … de ellos SIN nómina VS | **30** | 39 |
-| … con nómina VS | **32** | 33 |
-| …… completos (eval ≥ deben) | 10 | 11 |
-| …… incompletos (eval < deben) | 22 | 22 |
-| Trabajadores que deben ingresar / evaluados (en CT C-M) | 1.373 / 1.086 | 1.375 / 1.088 |
-| CT con nómina VS (total) | 105 | 116 |
-| … de esos, sin condición registrada (brecha inversa) | 70 | 80 |
+| … de ellos SIN nómina VS | **22** | 27 |
+| … con nómina VS | **40** | 45 |
+| …… completos (eval ≥ deben) | 9 | 10 |
+| …… incompletos (eval < deben) | 31 | 35 |
+| Trabajadores que deben ingresar / evaluados (en CT C-M) | 1.734 / 1.086 | 1.767 / 1.088 |
+| CT con nómina VS (total) | 143 | 172 |
+| … de esos, sin condición registrada (brecha inversa) | 100 | 124 |
 
 Si tus números no dan esto, el filtro o el manejo de nulos está mal. **Párate y avísame.**
 
-Dato conocido, no es bug: los CT `77063395-81`, `78637890-71` y `78973230-29` tienen vigilancia de la
-salud pero no están en el universo (no están en el plan ni tienen actividad en SIGECO/ISTProd), así
-que nunca aparecerán en el dashboard. Por eso 119 CT en la fuente → 116 en la planilla.
+Dato conocido, no es bug: 6 CT (`76726790-811`, `77063395-81`, `78637890-71`, `78973230-29`,
+`84865000-5294`, `96856610-515`) tienen vigilancia de la salud pero no están en el universo (no están
+en el plan ni tienen actividad en SIGECO/ISTProd), así que nunca aparecerán en el dashboard. Por eso
+178 CT en la fuente → 172 en la planilla.
 
 ---
 
